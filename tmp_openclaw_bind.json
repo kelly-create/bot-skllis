@@ -1,0 +1,147 @@
+{
+  "meta": {
+    "lastTouchedVersion": "2026.2.2-3",
+    "lastTouchedAt": "2026-02-04T18:07:55.826Z"
+  },
+  "wizard": {
+    "lastRunAt": "2026-02-04T16:54:38.533Z",
+    "lastRunVersion": "2026.2.2-3",
+    "lastRunCommand": "configure",
+    "lastRunMode": "local"
+  },
+  "auth": {
+    "profiles": {}
+  },
+  "models": {
+    "providers": {
+      "sydney-proxy": {
+        "baseUrl": "http://206.168.133.84:8317/v1",
+        "apiKey": "sk-openclaw-hk-link",
+        "api": "openai-responses",
+        "models": [
+          {
+            "id": "gemini-claude-sonnet-4-5-thinking",
+            "name": "gemini-claude-sonnet-4-5-thinking",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "gemini-claude-sonnet-4-5",
+            "name": "gemini-claude-sonnet-4-5",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "gemini-3-pro-preview",
+            "name": "gemini-3-pro-preview",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "gemini-claude-opus-4-5-thinking",
+            "name": "gemini-claude-opus-4-5-thinking",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "sydney-proxy/gemini-claude-sonnet-4-5-thinking"
+      },
+      "models": {
+        "sydney-proxy/gemini-claude-sonnet-4-5-thinking": {},
+        "sydney-proxy/gemini-claude-sonnet-4-5": {},
+        "sydney-proxy/gemini-3-pro-preview": {},
+        "sydney-proxy/gemini-claude-opus-4-5-thinking": {}
+      },
+      "workspace": "/root/.openclaw/workspace",
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      }
+    }
+  },
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "commands": {
+    "native": "auto",
+    "nativeSkills": "auto"
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "dmPolicy": "pairing",
+      "botToken": "8596711036:AAG1SF19xwf0xUgp1fq8nOuhLMJ9xVGcnu8",
+      "groupPolicy": "allowlist",
+      "streamMode": "partial"
+    }
+  },
+  "gateway": {
+    "port": 18789,
+    "mode": "local",
+    "bind": "0.0.0.0",
+    "auth": {
+      "mode": "token",
+      "token": "eff2afc5a93c9784072bcab7e655249d3bb09292850f1309"
+    },
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": {
+        "enabled": true
+      }
+    }
+  }
+}
