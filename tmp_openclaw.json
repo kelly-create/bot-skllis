@@ -1,0 +1,145 @@
+{
+  "messages": {
+    "ackReactionScope": "group-mentions"
+  },
+  "agents": {
+    "defaults": {
+      "maxConcurrent": 4,
+      "subagents": {
+        "maxConcurrent": 8
+      },
+      "compaction": {
+        "mode": "safeguard"
+      },
+      "workspace": "/root/.openclaw/workspace",
+      "model": {
+        "primary": "sydney-proxy/gemini-claude-sonnet-4-5-thinking"
+      },
+      "models": {
+        "openai-codex/gpt-5.2-codex": {},
+        "sydney-proxy/gemini-claude-sonnet-4-5-thinking": {},
+        "sydney-proxy/gemini-claude-sonnet-4-5": {},
+        "sydney-proxy/gemini-3-pro-preview": {},
+        "sydney-proxy/gemini-claude-opus-4-5-thinking": {}
+      }
+    }
+  },
+  "gateway": {
+    "mode": "local",
+    "auth": {
+      "mode": "token",
+      "token": "eff2afc5a93c9784072bcab7e655249d3bb09292850f1309"
+    },
+    "port": 18789,
+    "bind": "loopback",
+    "tailscale": {
+      "mode": "off",
+      "resetOnExit": false
+    }
+  },
+  "auth": {
+    "profiles": {
+      "openai-codex:default": {
+        "provider": "openai-codex",
+        "mode": "oauth"
+      }
+    }
+  },
+  "plugins": {
+    "entries": {
+      "telegram": {
+        "enabled": true
+      }
+    }
+  },
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "8596711036:AAG1SF19xwf0xUgp1fq8nOuhLMJ9xVGcnu8"
+    }
+  },
+  "wizard": {
+    "lastRunAt": "2026-02-05T12:35:34.183Z",
+    "lastRunVersion": "2026.2.3-1",
+    "lastRunCommand": "onboard",
+    "lastRunMode": "local"
+  },
+  "meta": {
+    "lastTouchedVersion": "2026.2.3-1",
+    "lastTouchedAt": "2026-02-05T12:35:34.197Z"
+  },
+  "models": {
+    "providers": {
+      "sydney-proxy": {
+        "baseUrl": "http://206.168.133.84:8317/v1",
+        "api": "openai-responses",
+        "models": [
+          {
+            "id": "gemini-claude-sonnet-4-5-thinking",
+            "name": "gemini-claude-sonnet-4-5-thinking",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "gemini-claude-sonnet-4-5",
+            "name": "gemini-claude-sonnet-4-5",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "gemini-3-pro-preview",
+            "name": "gemini-3-pro-preview",
+            "reasoning": false,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          },
+          {
+            "id": "gemini-claude-opus-4-5-thinking",
+            "name": "gemini-claude-opus-4-5-thinking",
+            "reasoning": true,
+            "input": [
+              "text"
+            ],
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0
+            },
+            "contextWindow": 200000,
+            "maxTokens": 8192
+          }
+        ]
+      }
+    }
+  }
+}
