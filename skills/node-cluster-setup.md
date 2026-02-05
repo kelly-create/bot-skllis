@@ -85,6 +85,64 @@ openclaw nodes run --node <node-name> -- bash -c "uptime"
 - 检查节点服务日志：`systemctl --user status openclaw-node`
 - 检查 socat 是否存活：`ps aux | grep socat`
 
+## 浏览器功能配置
+
+### 问题：OpenClaw browser start 失败
+**错误信息**：`Failed to start Chrome CDP on port 18800`
+
+**原因**：OpenClaw 的 browser manager 可能无法自动启动 Chrome（权限/环境问题）
+
+**解决方案**：手动启动 Chrome，然后让 OpenClaw 连接
+```bash
+# 在节点上手动启动 Chrome
+google-chrome --headless=new --disable-gpu --no-sandbox \
+  --remote-debugging-port=18800 \
+  --user-data-dir=/tmp/openclaw-chrome \
+  about:blank &
+
+# 验证 Chrome 是否启动
+curl -s http://127.0.0.1:18800/json/version
+```
+
+### 使用浏览器
+```bash
+# 列出标签页
+openclaw browser tabs
+
+# 打开网页
+openclaw browser open https://example.com
+
+# 截图
+openclaw browser screenshot
+
+# 获取页面内容
+openclaw browser snapshot
+```
+
+### socat 端口转发持久化
+**问题**：nohup 运行的 socat 会被 SIGKILL
+
+**解决方案**：做成 systemd 服务
+```bash
+cat > /etc/systemd/system/openclaw-relay.service << 'EOF'
+[Unit]
+Description=OpenClaw Gateway Relay (socat)
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/socat TCP-LISTEN:18790,fork,bind=0.0.0.0,reuseaddr TCP:127.0.0.1:18789
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now openclaw-relay
+```
+
 ---
 *记录时间：2026-02-05*
+*更新时间：2026-02-05 18:25 UTC*
 *作者：小鸡 (OpenClaw Agent)*
