@@ -19,11 +19,22 @@
 - **代码仓库**: `kelly-create/bot-skllis` (GitHub)
 - **知识库同步**: 通过 Git 仓库同步 MEMORY.md
 
+## 搜索引擎 API 配置
+- **Brave Search**: `BSAE-ShJ1YElUxKC_QmZKqvNaMoFc9I` ✅ 已配置
+- **Exa API**: `1c0d0b70-108e-4e2b-abd8-6ae88705e8f8` 🔜 待集成
+- **Tavily API**: `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` 🔜 待集成
+
+**多源搜索策略**：
+- 当前 OpenClaw 内置 `web_search` 仅支持 Brave 和 Perplexity
+- Exa 和 Tavily 需通过自定义脚本或未来版本集成
+- 建议方案：编写 Python wrapper 整合三个 API，返回综合结果
+
 ## 当前状态
 - 已配置 10 个 GPT 模型到 Gateway
 - 已设置子 Agent 默认使用 GPT-5.2 Codex
 - 知识库初始化完成
 - 多节点集群（皮特 x86 + 萝卜 ARM64）已就绪
+- Brave Search API 已配置并测试通过
 
 ## 节点分工策略
 - **萝卜**：主力开发、重活
