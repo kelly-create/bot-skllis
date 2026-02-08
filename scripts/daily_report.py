@@ -19,7 +19,7 @@ SCRIPTS_DIR = "/root/.openclaw/workspace/scripts"
 RECIPIENT_EMAIL = "k925138635@gmail.com"
 
 # AI API 配置（使用 Gemini 3 Pro）
-AI_API_URL = "http://206.168.133.84:8317/v1/chat/completions"
+AI_API_URL = "https://xiaoji.caopi.de/v1/chat/completions"
 AI_API_KEY = "sk-openclaw-hk-link"
 AI_MODEL = "gemini-3-pro-preview"  # 使用 Gemini 3 Pro
 
