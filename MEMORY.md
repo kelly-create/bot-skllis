@@ -28,21 +28,27 @@ ls skills/
 
 ```
 /root/.openclaw/workspace/
-├── MEMORY.md          # 长期重要记忆（规则、教训、偏好）
-├── CRITICAL-CONFIG-RULES.md  # 配置安全规则（最重要！）
-├── memory/            # 每日记忆存档
-│   ├── 2026-02-07.md
-│   ├── 2026-02-08.md
-│   └── ...
-├── skills/            # 技能文档
-│   ├── daily-report.md
-│   ├── gmail-client.md
-│   └── ...
-└── scripts/           # 脚本文件
-    ├── daily_report.py
-    ├── context_backup.py
-    └── ...
+├── MEMORY.md              # 长期规则（必读）
+├── CRITICAL-CONFIG-RULES.md  # 配置安全规则（必读）
+├── credentials/           # 🔐 凭证信息（必读）
+│   ├── nodes.md          # 节点SSH/Tailscale信息
+│   ├── apis.md           # API密钥汇总
+│   └── owner.md          # 主人信息和偏好
+├── memory/               # 每日记忆存档
+│   └── YYYY-MM-DD.md
+├── skills/               # 技能文档
+│   └── *.md
+└── scripts/              # 可执行脚本
+    └── *.py
 ```
+
+## ⚠️ 上下文压缩后必读
+
+1. `credentials/owner.md` - 知道主人是谁
+2. `credentials/nodes.md` - 节点SSH信息
+3. `credentials/apis.md` - API凭证
+4. `CRITICAL-CONFIG-RULES.md` - 配置安全
+5. 最近的 `memory/*.md` - 近期工作
 
 ## 自动备份
 
@@ -89,12 +95,17 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - **修复**: `openclaw doctor --fix`
 - **教训**: 配置验证失败 = 服务崩溃
 
-## 节点信息
+## 节点分工
 
-| 节点 | 用途 | 状态 |
-|------|------|------|
-| **皮特** (cjwgx0ermi5b1pl) | 轻量测试、回帖任务 | x86_64 |
-| **萝卜** (ARM-Node-4C6G) | 开发验证 | ARM64 |
+```
+萝卜(开发) → 皮特(验证) → 小鸡(最终核对)
+```
+
+| 节点 | 定位 | 架构 | 说明 |
+|------|------|------|------|
+| **萝卜** | 🔧 开发 | ARM64 | 新功能/脚本开发 |
+| **皮特** | ✅ 验证 | x86_64 | 测试验证、生产任务 |
+| **小鸡** | 🎯 核对 | Gateway | 最终审核确认 |
 
 ## 定时任务
 
