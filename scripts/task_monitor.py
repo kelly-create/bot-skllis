@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-任务监控告警系统
+任务监控告警系统 (同步版本)
 - 检查所有定时任务执行状态
 - 失败时立即 Telegram 告警
 - 生成每日汇总报告
@@ -9,8 +9,7 @@
 import os
 import re
 import json
-import asyncio
-import aiohttp
+import requests
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -41,7 +40,7 @@ TASKS = {
 }
 
 
-async def send_telegram(message: str, parse_mode: str = "Markdown"):
+def send_telegram(message: str, parse_mode: str = "Markdown") -> bool:
     """发送 Telegram 通知"""
     if not TG_BOT_TOKEN:
         print(f"[TG] {message}")
@@ -55,9 +54,8 @@ async def send_telegram(message: str, parse_mode: str = "Markdown"):
     }
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload) as resp:
-                return resp.status == 200
+        resp = requests.post(url, json=payload, timeout=10)
+        return resp.status_code == 200
     except Exception as e:
         print(f"发送失败: {e}")
         return False
@@ -89,7 +87,6 @@ def parse_log(log_path: str, success_pattern: str, hours: int = 24) -> dict:
         runs = []
         
         for line in lines:
-            # 尝试解析时间戳
             time_match = re.match(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', line)
             if time_match:
                 try:
@@ -109,24 +106,20 @@ def parse_log(log_path: str, success_pattern: str, hours: int = 24) -> dict:
         
         result["runs"] = runs
         
-        # 检查最后一次运行
         if runs:
             last_run = runs[-1]
             last_run_text = ''.join(last_run)
             
-            # 获取最后运行时间
             time_match = re.search(r'(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', last_run[0])
             if time_match:
                 result["last_run"] = time_match.group(1)
             
-            # 检查成功
             success_match = re.search(success_pattern, last_run_text)
             if success_match:
                 result["success"] = True
                 result["details"] = success_match.group(0)
             else:
-                # 检查错误
-                if 'ERROR' in last_run_text or '失败' in last_run_text or 'error' in last_run_text.lower():
+                if 'ERROR' in last_run_text or '失败' in last_run_text:
                     result["details"] = "执行出错"
                 else:
                     result["details"] = "未找到成功标记"
@@ -137,7 +130,7 @@ def parse_log(log_path: str, success_pattern: str, hours: int = 24) -> dict:
     return result
 
 
-async def check_all_tasks() -> dict:
+def check_all_tasks() -> dict:
     """检查所有任务状态"""
     results = {}
     
@@ -153,7 +146,7 @@ async def check_all_tasks() -> dict:
     return results
 
 
-async def generate_report(results: dict) -> str:
+def generate_report(results: dict) -> str:
     """生成汇总报告"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     
@@ -186,7 +179,7 @@ async def generate_report(results: dict) -> str:
     return report
 
 
-async def alert_failures(results: dict):
+def alert_failures(results: dict):
     """失败任务告警"""
     failures = []
     
@@ -200,32 +193,28 @@ async def alert_failures(results: dict):
             msg += f"❌ {f['name']} ({f['node']})\n"
             msg += f"   {f['details']}\n\n"
         
-        await send_telegram(msg)
+        send_telegram(msg)
 
 
-async def main():
+def main():
     """主函数"""
     import sys
     
-    results = await check_all_tasks()
+    results = check_all_tasks()
     
     if len(sys.argv) > 1:
         if sys.argv[1] == "--report":
-            # 生成并发送报告
-            report = await generate_report(results)
-            await send_telegram(report)
+            report = generate_report(results)
+            send_telegram(report)
             print(report)
         elif sys.argv[1] == "--alert":
-            # 只在失败时告警
-            await alert_failures(results)
+            alert_failures(results)
         elif sys.argv[1] == "--json":
-            # 输出 JSON
             print(json.dumps(results, ensure_ascii=False, indent=2, default=str))
     else:
-        # 默认：检查并输出
-        report = await generate_report(results)
+        report = generate_report(results)
         print(report)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -87,7 +87,8 @@ def check_schema(config: dict) -> list:
     known_fields = {
         "version", "agent", "llm", "tools", "plugins", "hooks",
         "auth", "limits", "logging", "experimental", "sessions",
-        "channels", "messaging", "memory", "sandbox"
+        "channels", "messaging", "memory", "sandbox", "meta",
+        "wizard", "models", "agents", "messages", "commands", "gateway"
     }
     
     # 检查未知字段

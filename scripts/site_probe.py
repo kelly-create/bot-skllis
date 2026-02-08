@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-网站状态探测
+网站状态探测 (requests 版本)
 - 检测网站是否可访问
 - 检测发帖间隔限制
 - 自适应调整等待时间
 """
 
-import asyncio
-import aiohttp
 import json
 import sys
 import time
+import requests
 from datetime import datetime
 from typing import Dict, Optional
-from urllib.parse import urlparse
+
+# 禁用 SSL 警告
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # 默认检测配置
 DEFAULT_SITES = {
@@ -38,7 +40,7 @@ STATUS_CACHE: Dict[str, dict] = {}
 CACHE_FILE = "/tmp/site_status_cache.json"
 
 
-async def check_site(site_id: str, config: dict) -> dict:
+def check_site(site_id: str, config: dict) -> dict:
     """检测单个网站状态"""
     result = {
         "site_id": site_id,
@@ -56,67 +58,66 @@ async def check_site(site_id: str, config: dict) -> dict:
     try:
         start_time = time.time()
         
-        async with aiohttp.ClientSession() as session:
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        
+        resp = requests.get(
+            config["url"],
+            timeout=config.get("timeout", 30),
+            headers=headers,
+            verify=False
+        )
+        
+        result["response_time"] = round((time.time() - start_time) * 1000)
+        result["status_code"] = resp.status_code
+        
+        if resp.status_code == 200:
+            text_lower = resp.text.lower()
             
-            async with session.get(
-                config["url"],
-                timeout=aiohttp.ClientTimeout(total=config.get("timeout", 30)),
-                headers=headers,
-                ssl=False
-            ) as resp:
-                result["response_time"] = round((time.time() - start_time) * 1000)
-                result["status_code"] = resp.status
-                
-                if resp.status == 200:
-                    text = await resp.text()
-                    text_lower = text.lower()
-                    
-                    # 检查是否被封禁
-                    for kw in config.get("block_keywords", []):
-                        if kw.lower() in text_lower:
-                            result["status"] = "blocked"
-                            result["blocked"] = True
-                            result["message"] = f"检测到封禁关键词: {kw}"
-                            return result
-                    
-                    # 检查正常关键词
-                    keywords = config.get("keywords", [])
-                    if keywords:
-                        found = any(kw.lower() in text_lower for kw in keywords)
-                        if found:
-                            result["status"] = "ok"
-                            result["accessible"] = True
-                            result["message"] = "网站正常"
-                        else:
-                            result["status"] = "warning"
-                            result["accessible"] = True
-                            result["message"] = "页面内容可能异常"
-                    else:
-                        result["status"] = "ok"
-                        result["accessible"] = True
-                        result["message"] = "网站可访问"
-                
-                elif resp.status == 403:
+            # 检查是否被封禁
+            for kw in config.get("block_keywords", []):
+                if kw.lower() in text_lower:
                     result["status"] = "blocked"
                     result["blocked"] = True
-                    result["message"] = "403 禁止访问"
-                
-                elif resp.status == 503:
-                    result["status"] = "maintenance"
-                    result["message"] = "网站维护中"
-                
+                    result["message"] = f"检测到封禁关键词: {kw}"
+                    return result
+            
+            # 检查正常关键词
+            keywords = config.get("keywords", [])
+            if keywords:
+                found = any(kw.lower() in text_lower for kw in keywords)
+                if found:
+                    result["status"] = "ok"
+                    result["accessible"] = True
+                    result["message"] = "网站正常"
                 else:
-                    result["status"] = "error"
-                    result["message"] = f"HTTP {resp.status}"
+                    result["status"] = "warning"
+                    result["accessible"] = True
+                    result["message"] = "页面内容可能异常"
+            else:
+                result["status"] = "ok"
+                result["accessible"] = True
+                result["message"] = "网站可访问"
+        
+        elif resp.status_code == 403:
+            result["status"] = "blocked"
+            result["blocked"] = True
+            result["message"] = "403 禁止访问"
+        
+        elif resp.status_code == 503:
+            result["status"] = "maintenance"
+            result["message"] = "网站维护中"
+        
+        else:
+            result["status"] = "error"
+            result["message"] = f"HTTP {resp.status_code}"
     
-    except asyncio.TimeoutError:
+    except requests.Timeout:
         result["status"] = "timeout"
         result["message"] = f"连接超时 ({config.get('timeout', 30)}s)"
     
-    except aiohttp.ClientError as e:
+    except requests.RequestException as e:
         result["status"] = "error"
         result["message"] = f"连接错误: {type(e).__name__}"
     
@@ -127,7 +128,7 @@ async def check_site(site_id: str, config: dict) -> dict:
     return result
 
 
-async def check_all_sites(sites: dict = None) -> dict:
+def check_all_sites(sites: dict = None) -> dict:
     """检测所有网站"""
     if sites is None:
         sites = DEFAULT_SITES
@@ -135,7 +136,7 @@ async def check_all_sites(sites: dict = None) -> dict:
     results = {}
     
     for site_id, config in sites.items():
-        result = await check_site(site_id, config)
+        result = check_site(site_id, config)
         results[site_id] = result
         STATUS_CACHE[site_id] = result
     
@@ -189,7 +190,7 @@ def suggest_wait_time(site_id: str) -> int:
 
 def format_report(results: dict) -> str:
     """格式化报告"""
-    lines = ["📡 *网站状态探测*\n"]
+    lines = ["📡 网站状态探测\n"]
     
     for site_id, result in results.items():
         if result["status"] == "ok":
@@ -203,7 +204,7 @@ def format_report(results: dict) -> str:
         else:
             icon = "❌"
         
-        lines.append(f"{icon} *{result['name']}*")
+        lines.append(f"{icon} {result['name']}")
         lines.append(f"   {result['url']}")
         
         if result["response_time"]:
@@ -218,11 +219,11 @@ def format_report(results: dict) -> str:
     return "\n".join(lines)
 
 
-async def main():
+def main():
     """主函数"""
     if len(sys.argv) > 1:
         if sys.argv[1] == "--json":
-            results = await check_all_sites()
+            results = check_all_sites()
             print(json.dumps(results, ensure_ascii=False, indent=2))
         
         elif sys.argv[1] == "--suggest":
@@ -233,7 +234,7 @@ async def main():
         elif sys.argv[1] == "--site":
             site_id = sys.argv[2] if len(sys.argv) > 2 else "pvew5"
             if site_id in DEFAULT_SITES:
-                result = await check_site(site_id, DEFAULT_SITES[site_id])
+                result = check_site(site_id, DEFAULT_SITES[site_id])
                 print(json.dumps(result, ensure_ascii=False, indent=2))
             else:
                 print(f"未知站点: {site_id}")
@@ -245,9 +246,9 @@ async def main():
             print("  python3 site_probe.py --site <id>  # 检测单个站点")
             print("  python3 site_probe.py --suggest <id>  # 建议等待时间")
     else:
-        results = await check_all_sites()
+        results = check_all_sites()
         print(format_report(results))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
