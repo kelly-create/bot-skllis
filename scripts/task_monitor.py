@@ -28,7 +28,7 @@ TASKS = {
     "xsijishe": {
         "name": "xsijishe 签到",
         "log_path": "/root/.openclaw/workspace/xsijishe.log",
-        "success_pattern": r"(签到成功|已签到)",
+        "success_pattern": r"(签到成功|已签到|===== 成功 =====)",
         "node": "皮特"
     },
     "daily_report": {
