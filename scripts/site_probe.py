@@ -27,10 +27,10 @@ DEFAULT_SITES = {
         "block_keywords": ["403", "banned", "forbidden"]
     },
     "xsijishe": {
-        "url": "https://xsijishe.com",
+        "url": "https://xsijishe.net",
         "name": "xsijishe 论坛",
         "timeout": 30,
-        "keywords": [],
+        "keywords": ["签到", "登录"],
         "block_keywords": ["403", "banned"]
     }
 }
