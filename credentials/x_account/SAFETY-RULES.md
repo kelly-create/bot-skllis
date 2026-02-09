@@ -302,7 +302,86 @@ X_SAFETY_CONFIG = {
 
 ---
 
-**版本**: v2.0
+## 🔧 API调用优化（避免400错误）
+
+> 📋 **教训来源**：2026-02-09 分析@GGB9573时出现400 Invalid JSON错误
+
+### 问题原因
+1. **上下文累积过长** - Playwright脚本长时间运行，输出大量页面内容
+2. **JSON格式问题** - 大量嵌套内容导致JSON解析失败
+3. **API请求过大** - CLI Proxy API对请求大小有限制
+
+### 改善措施
+
+```python
+# 1. 分段处理 - 不一次性获取整个页面
+async def get_page_content_chunked(page, max_length=10000):
+    """分段获取页面内容，避免一次性抓取过多"""
+    content = await page.content()
+    if len(content) > max_length:
+        # 只取关键部分
+        return content[:max_length] + "\n... [truncated]"
+    return content
+
+# 2. 精简DOM选择器 - 只获取需要的元素
+SAFE_SELECTORS = {
+    'tweets': '[data-testid="tweet"]',
+    'user_info': '[data-testid="UserName"]',
+    'follow_button': '[data-testid$="-follow"]',
+    'like_button': '[data-testid="like"]',
+}
+
+# 3. 使用snapshot代替全量截取
+async def safe_page_analysis(page):
+    """安全的页面分析方式"""
+    # 优先使用browser snapshot
+    # 避免获取完整DOM树
+    # 只提取必要信息
+    pass
+
+# 4. 定期重置上下文
+class ContextManager:
+    def __init__(self, max_operations=5):
+        self.operation_count = 0
+        self.max_operations = max_operations
+    
+    def should_reset(self):
+        """超过阈值时建议重置上下文"""
+        return self.operation_count >= self.max_operations
+    
+    def record(self):
+        self.operation_count += 1
+
+# 5. 错误恢复策略
+ERROR_RECOVERY = {
+    400: {
+        'action': 'reset_context',
+        'wait_seconds': 10,
+        'retry': True,
+    },
+    429: {  # Rate limited
+        'action': 'long_pause',
+        'wait_seconds': 300,
+        'retry': False,
+    },
+    500: {
+        'action': 'retry_later',
+        'wait_seconds': 60,
+        'retry': True,
+    },
+}
+```
+
+### 最佳实践
+1. ✅ **分批执行** - 长任务分成多个小任务
+2. ✅ **精简输出** - 只获取需要的信息
+3. ✅ **定期清理** - 避免上下文无限增长
+4. ✅ **优雅降级** - 出错时自动简化请求
+5. ✅ **监控大小** - 请求/响应超过阈值时预警
+
+---
+
+**版本**: v2.1
 **创建时间**: 2026-02-09
-**最后更新**: 2026-02-09 07:50 UTC
+**最后更新**: 2026-02-09 08:32 UTC
 **原则**: 宁可慢，不可快；宁可少，不可多
