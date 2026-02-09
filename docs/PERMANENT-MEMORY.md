@@ -1,4 +1,8 @@
-# 🧠 永久记忆系统使用指南
+# 🧠 永久记忆系统完整指南
+
+> 整合自 PERMANENT-MEMORY-GUIDE.md 和 PERMANENT-MEMORY-SYSTEM.md
+
+---
 
 ## 📋 系统架构
 
@@ -15,6 +19,8 @@ OpenClaw的永久记忆基于**文件系统**，包含两个层次：
 - **凭证信息**：`credentials/*.md`
 - **技能文档**：`skills/*.md`
 - **配置规则**：`CRITICAL-CONFIG-RULES.md`
+
+---
 
 ## 🔄 压缩后恢复记忆流程
 
@@ -45,6 +51,8 @@ exec: grep -r "关键词" /root/.openclaw/workspace/memory/
 - [ ] 检查定时任务状态：`cron list`
 - [ ] 确认没有遗漏的待办事项
 
+---
+
 ## 🎯 CORE-MEMORY.md 内容结构
 
 ```
@@ -58,6 +66,8 @@ CORE-MEMORY.md
 ├── 文件位置速查
 └── 压缩后恢复步骤
 ```
+
+---
 
 ## 🔍 搜索记忆的方法
 
@@ -77,15 +87,17 @@ grep "关键词" /root/.openclaw/workspace/memory/2026-02-09.md
 grep -ri "关键词" /root/.openclaw/workspace/
 ```
 
-### 方法2：memory_search（需要embeddings，备用）
+### 方法2：Embeddings语义搜索（备用）
 
-**当前状态**：embeddings服务已部署（测试阶段），但未集成到OpenClaw
+**当前状态**：embeddings服务已部署在萝卜节点（测试阶段）
 
-**如果将来启用**：
-```
-memory_search("美国服务器的IP")
-# 会自动语义搜索记忆文件
-```
+- 模型：paraphrase-multilingual-MiniLM-L12-v2
+- 端口：8318（localhost）
+- 中文支持：优秀
+
+**未来可能启用**：通过memory_search工具进行语义搜索
+
+---
 
 ## 📝 记忆文件维护
 
@@ -100,8 +112,6 @@ memory_search("美国服务器的IP")
 - 遇到的问题和解决方案
 - 重要配置变更
 - 待办事项
-
-**示例**：参见 `memory/2026-02-09.md`
 
 ### CORE-MEMORY.md 更新时机
 
@@ -119,6 +129,8 @@ git add CORE-MEMORY.md
 git commit -m "🧠 更新核心记忆: [变更说明]"
 git push
 ```
+
+---
 
 ## ⚠️ 重要原则
 
@@ -140,25 +152,7 @@ git push
    - 所有记忆文件定期推送
    - 防止本地丢失
 
-## 🔧 工具和命令
-
-### 快速命令别名（可选）
-
-可以添加到 `.bashrc`：
-
-```bash
-# 记忆搜索
-alias mem-search='grep -r "$1" /root/.openclaw/workspace/memory/'
-
-# 读取今天记忆
-alias mem-today='cat /root/.openclaw/workspace/memory/$(date +%Y-%m-%d).md'
-
-# 读取核心记忆
-alias mem-core='cat /root/.openclaw/workspace/CORE-MEMORY.md'
-
-# 搜索凭证
-alias cred-search='grep -r "$1" /root/.openclaw/workspace/credentials/'
-```
+---
 
 ## 📊 记忆系统对比
 
@@ -168,27 +162,15 @@ alias cred-search='grep -r "$1" /root/.openclaw/workspace/credentials/'
 | **grep搜索** | ⭐⭐⭐⭐☆ | ⭐⭐⭐⭐☆ | ⭐⭐⭐⭐⭐ | ✅ 辅助搜索 |
 | **memory_search** | ⭐⭐⭐☆☆ | ⭐⭐⭐☆☆ | ⭐⭐☆☆☆ | ⚠️ 备用（未集成） |
 
+---
+
 ## 🎯 最佳实践
 
 ### 压缩前准备
 
 1. **更新今日记忆**
-   ```bash
-   # 编辑今天的记忆文件
-   vim /root/.openclaw/workspace/memory/$(date +%Y-%m-%d).md
-   ```
-
-2. **标记重要信息**
-   - 在CORE-MEMORY.md中标记新的关键信息
-   - 确保重要凭证已记录
-
+2. **标记重要信息到CORE-MEMORY.md**
 3. **同步到GitHub**
-   ```bash
-   cd /root/.openclaw/workspace
-   git add -A
-   git commit -m "📝 更新记忆：[今日摘要]"
-   git push
-   ```
 
 ### 压缩后恢复
 
@@ -197,26 +179,17 @@ alias cred-search='grep -r "$1" /root/.openclaw/workspace/credentials/'
 3. **确认定时任务状态**
 4. **如有疑问，用grep搜索**
 
+---
+
 ## 📚 相关文档
 
 - **核心记忆**：`CORE-MEMORY.md`
-- **记忆系统说明**：`MEMORY.md`
+- **根目录记忆说明**：`MEMORY.md`
 - **配置安全规则**：`CRITICAL-CONFIG-RULES.md`
-- **永久记忆部署指南**：本文件
-- **Embeddings部署文档**：`docs/EMBEDDINGS-DEPLOYMENT.md`（备用）
-
-## 🔮 未来优化
-
-**如果需要更强的语义搜索**：
-1. 集成embeddings到OpenClaw的memory_search
-2. 创建记忆向量索引
-3. 自动压缩时触发记忆回顾
-
-**但当前方案已经足够可靠！**
+- **Embeddings部署文档**：`docs/EMBEDDINGS-DEPLOYMENT.md`
 
 ---
 
 **版本**: v3.0  
 **最后更新**: 2026-02-09  
-**维护者**: OpenClaw小鸡  
-**状态**: 生产环境（推荐方案）
+**维护者**: OpenClaw小鸡
