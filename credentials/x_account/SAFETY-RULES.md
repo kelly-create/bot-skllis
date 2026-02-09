@@ -305,11 +305,21 @@ X_SAFETY_CONFIG = {
 ## 🔧 API调用优化（避免400错误）
 
 > 📋 **教训来源**：2026-02-09 分析@GGB9573时出现400 Invalid JSON错误
+> 📌 **官方Issue**: [#1433](https://github.com/router-for-me/CLIProxyAPI/issues/1433) - 已确认的已知问题
 
-### 问题原因
-1. **上下文累积过长** - Playwright脚本长时间运行，输出大量页面内容
-2. **JSON格式问题** - 大量嵌套内容导致JSON解析失败
-3. **API请求过大** - CLI Proxy API对请求大小有限制
+### 问题原因（官方确认）
+1. **请求体大小限制** - CLIProxyAPI内部有约280KB的限制
+2. **请求体被截断** - 大请求在转发前被截断，导致JSON不完整
+3. **上下文累积过长** - 长时间运行的脚本输出大量内容导致超限
+
+### 相关官方Issues
+- **#1433**: 大请求体(~290KB)被截断 → "Invalid JSON payload" (🟡 Open)
+- **#1424**: Claude→Gemini转换时JSON Schema字段不兼容
+- **#1189**: 大型工具定义导致400错误
+
+### 官方修复状态
+- v6.8.2: `400 invalid_request_error 立即返回不再重试` - 仅防止无限重试
+- 根本问题**尚未修复**，需等待官方更新
 
 ### 改善措施
 
