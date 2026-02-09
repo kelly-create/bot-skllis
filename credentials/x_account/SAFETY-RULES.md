@@ -1,118 +1,308 @@
-# 🛡️ X账号操作安全规范
+# 🛡️ X账号操作安全规范 v2.0
 
-> ⚠️ 重要：遵循这些规则避免账号被限制或封禁
+> ⚠️ **最高优先级**：避免被检测为机器人，保护账号安全
+
+---
 
 ## 🚨 教训记录
 
 ### 2026-02-09 临时限制事件
-- **原因**：短时间内操作过多（发帖+关注多个账号）
+- **原因**：短时间内操作过多（发帖+连续关注多个账号）
+- **触发条件**：5分钟内发帖2次+关注3人
 - **结果**：账号被临时限制
-- **解决**：用户手动解除
+- **教训**：新账号更容易被标记，需要更谨慎
 
-## ⏰ 操作频率限制
+---
 
-### 发帖
-| 类型 | 限制 | 建议 |
-|------|------|------|
-| 单次发帖 | 间隔 ≥ 5分钟 | 10分钟以上更安全 |
-| 每日发帖 | ≤ 10条 | 3-5条为佳 |
-| 带图发帖 | 间隔 ≥ 10分钟 | 避免连续发图 |
+## 🔒 核心安全规则
 
-### 关注
-| 类型 | 限制 | 建议 |
-|------|------|------|
-| 单次关注 | 1个/次 | 每次只关注1人 |
-| 关注间隔 | ≥ 30秒 | 1-2分钟更安全 |
-| 每日关注 | ≤ 20个 | 5-10个为佳 |
-| 批量关注 | ❌ 禁止 | 分散到多天 |
+### 1️⃣ 随机延迟（最重要）
 
-### 点赞/转发
-| 类型 | 限制 | 建议 |
-|------|------|------|
-| 点赞间隔 | ≥ 10秒 | 30秒更安全 |
-| 每日点赞 | ≤ 50个 | 20-30个为佳 |
-| 转发间隔 | ≥ 1分钟 | 5分钟更安全 |
-
-## 🤖 反检测措施
-
-### 必须遵守
-1. **随机延迟**：每次操作前添加随机等待时间（10-30秒）
-2. **人类行为模拟**：鼠标移动、滚动页面
-3. **避免模式化**：不要固定时间操作
-4. **分散操作**：不同类型操作交替进行
-
-### 代码示例
 ```python
 import random
 import asyncio
 
-# 随机延迟 10-30秒
-async def human_delay():
-    delay = random.uniform(10, 30)  # 10-30秒随机
+async def human_delay(min_sec=10, max_sec=30):
+    """每次操作前必须调用"""
+    delay = random.uniform(min_sec, max_sec)
+    print(f'⏳ 等待 {delay:.1f} 秒...')
     await asyncio.sleep(delay)
 
-# 操作前调用
-await human_delay()
-await do_action()
+# 不同场景的延迟
+DELAY_CONFIG = {
+    'before_action': (10, 30),      # 操作前
+    'after_action': (20, 60),       # 操作后
+    'between_pages': (5, 15),       # 页面切换
+    'after_error': (60, 120),       # 出错后
+    'session_start': (3, 8),        # 会话开始
+}
 ```
 
-## ⚠️ 禁止行为
+### 2️⃣ 严格频率限制
 
-1. ❌ 短时间内大量操作
-2. ❌ 固定间隔的自动化操作
-3. ❌ 批量关注/取关
-4. ❌ 重复发布相同内容
-5. ❌ 使用明显的自动化脚本
-6. ❌ 频繁登录/登出
+| 操作类型 | 单次间隔 | 每日上限 | 建议 |
+|---------|---------|---------|------|
+| **发帖** | ≥ 30分钟 | ≤ 3条 | 1-2条最安全 |
+| **带图发帖** | ≥ 1小时 | ≤ 2条 | 1条最安全 |
+| **关注** | ≥ 2分钟 | ≤ 5人 | 2-3人最安全 |
+| **点赞** | ≥ 30秒 | ≤ 20个 | 10个最安全 |
+| **转发** | ≥ 5分钟 | ≤ 5条 | 2-3条最安全 |
+| **评论** | ≥ 3分钟 | ≤ 10条 | 3-5条最安全 |
 
-## ✅ 推荐行为
-
-1. ✅ 模拟真人浏览（滚动、停留）
-2. ✅ 随机化所有操作间隔
-3. ✅ 每天操作时间不固定
-4. ✅ 偶尔手动登录使用
-5. ✅ 保持账号活跃但不过度
-6. ✅ 关注真实感兴趣的内容
-
-## 🔧 操作脚本规范
-
-所有X自动化脚本必须：
+### 3️⃣ 人类行为模拟
 
 ```python
-# 1. 导入随机模块
-import random
-
-# 2. 定义安全延迟函数 (10-30秒)
-async def safe_delay(min_sec=10, max_sec=30):
-    await asyncio.sleep(random.uniform(min_sec, max_sec))
-
-# 3. 每次操作前调用
-await safe_delay()
-
-# 4. 限制单次操作数量
-MAX_ACTIONS_PER_RUN = 3
-
-# 5. 操作后等待
-await safe_delay(20, 60)  # 操作后等待更长
+async def simulate_human_behavior(page):
+    """模拟真人浏览行为"""
+    
+    # 1. 随机滚动页面
+    scroll_times = random.randint(2, 5)
+    for _ in range(scroll_times):
+        scroll_amount = random.randint(200, 500)
+        await page.evaluate(f'window.scrollBy(0, {scroll_amount})')
+        await asyncio.sleep(random.uniform(1, 3))
+    
+    # 2. 随机鼠标移动
+    x = random.randint(100, 800)
+    y = random.randint(100, 600)
+    await page.mouse.move(x, y, steps=random.randint(5, 15))
+    
+    # 3. 随机停留
+    await asyncio.sleep(random.uniform(2, 8))
+    
+    # 4. 偶尔滚回顶部
+    if random.random() < 0.3:
+        await page.evaluate('window.scrollTo(0, 0)')
+        await asyncio.sleep(random.uniform(1, 2))
 ```
 
-## 📊 账号健康检查
+### 4️⃣ 会话管理
 
-定期检查：
-1. 账号是否被限制
-2. 帖子是否可见
-3. 关注/粉丝变化是否正常
+```python
+class XSession:
+    def __init__(self):
+        self.actions_count = 0
+        self.session_start = time.time()
+        self.MAX_ACTIONS_PER_SESSION = 3  # 单次会话最多3个操作
+        self.MAX_SESSION_DURATION = 600   # 最长10分钟
+    
+    def can_continue(self):
+        if self.actions_count >= self.MAX_ACTIONS_PER_SESSION:
+            return False
+        if time.time() - self.session_start > self.MAX_SESSION_DURATION:
+            return False
+        return True
+    
+    def record_action(self):
+        self.actions_count += 1
+```
 
-## 🆘 被限制后处理
+### 5️⃣ 时间随机化
 
-1. **立即停止**所有自动化操作
-2. **不要**尝试继续操作
-3. **通知主人**手动解除
-4. **等待**24-48小时后再尝试
-5. **减少**后续操作频率
+```python
+def get_random_execution_time():
+    """获取随机执行时间，避免固定模式"""
+    
+    # 基础时间偏移（-30到+30分钟）
+    offset_minutes = random.randint(-30, 30)
+    
+    # 避开整点和半点
+    minute = random.choice([7, 13, 23, 37, 43, 53])
+    
+    return offset_minutes, minute
+
+# 不要在以下时间操作（容易被检测）
+AVOID_TIMES = [
+    (0, 0),   # 整点
+    (30, 0),  # 半点
+]
+```
 
 ---
 
-**版本**: v1.0
+## ⛔ 绝对禁止
+
+1. ❌ **连续操作** - 任何两个操作之间必须有随机延迟
+2. ❌ **批量操作** - 禁止一次关注/点赞多个
+3. ❌ **固定间隔** - 禁止使用固定的sleep时间
+4. ❌ **重复内容** - 禁止发布相同或相似的帖子
+5. ❌ **频繁登录** - 每天最多1-2次会话
+6. ❌ **异常时间** - 避免凌晨2-6点操作
+7. ❌ **跨账号操作** - 不要同IP操作多个账号
+8. ❌ **无浏览直接操作** - 必须先模拟浏览行为
+
+---
+
+## ✅ 推荐操作流程
+
+### 发帖流程
+```python
+async def safe_post(page, content, image_path=None):
+    # 1. 会话开始延迟
+    await human_delay(3, 8)
+    
+    # 2. 模拟浏览首页
+    await page.goto('https://x.com/home')
+    await simulate_human_behavior(page)
+    
+    # 3. 操作前延迟
+    await human_delay(10, 30)
+    
+    # 4. 点击发帖区域
+    await page.click('[data-testid="tweetTextarea_0"]')
+    await human_delay(2, 5)
+    
+    # 5. 模拟人类打字（逐字输入）
+    for char in content:
+        await page.keyboard.type(char, delay=random.randint(50, 150))
+        if random.random() < 0.1:  # 10%概率停顿
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+    
+    # 6. 如果有图片
+    if image_path:
+        await human_delay(3, 8)
+        await page.set_input_files('input[type="file"]', image_path)
+        await human_delay(5, 15)  # 等待图片上传
+    
+    # 7. 发布前延迟
+    await human_delay(5, 15)
+    
+    # 8. 点击发布
+    await page.click('[data-testid="tweetButton"]')
+    
+    # 9. 操作后延迟
+    await human_delay(20, 60)
+    
+    # 10. 模拟继续浏览
+    await simulate_human_behavior(page)
+```
+
+### 关注流程
+```python
+async def safe_follow(page, username):
+    # 1. 先浏览首页
+    await page.goto('https://x.com/home')
+    await simulate_human_behavior(page)
+    await human_delay(10, 30)
+    
+    # 2. 访问用户页面
+    await page.goto(f'https://x.com/{username}')
+    await simulate_human_behavior(page)
+    await human_delay(10, 30)
+    
+    # 3. 点击关注
+    await page.click('[data-testid$="-follow"]')
+    
+    # 4. 关注后延迟
+    await human_delay(20, 60)
+    
+    # 5. 继续浏览该用户页面
+    await simulate_human_behavior(page)
+```
+
+---
+
+## 📊 操作配额管理
+
+```python
+class DailyQuota:
+    def __init__(self):
+        self.date = datetime.now().date()
+        self.posts = 0
+        self.follows = 0
+        self.likes = 0
+        self.retweets = 0
+    
+    def can_post(self):
+        return self.posts < 2
+    
+    def can_follow(self):
+        return self.follows < 3
+    
+    def can_like(self):
+        return self.likes < 10
+    
+    def reset_if_new_day(self):
+        if datetime.now().date() != self.date:
+            self.__init__()
+```
+
+---
+
+## 🆘 异常处理
+
+```python
+async def handle_restriction(page):
+    """检测到限制时的处理"""
+    
+    body = await page.inner_text('body')
+    
+    if 'restricted' in body.lower():
+        print('⚠️ 检测到账号限制！')
+        # 1. 立即停止所有操作
+        # 2. 记录事件
+        # 3. 通知主人
+        # 4. 等待24小时后再尝试
+        return 'RESTRICTED'
+    
+    if 'suspended' in body.lower():
+        print('❌ 账号被暂停！')
+        return 'SUSPENDED'
+    
+    if 'verify' in body.lower() or 'captcha' in body.lower():
+        print('🔐 需要验证！')
+        return 'VERIFY_REQUIRED'
+    
+    return 'OK'
+```
+
+---
+
+## 📅 推荐操作时间
+
+| 时间段 | 风险等级 | 建议 |
+|--------|---------|------|
+| 08:00-10:00 | 🟢 低 | 推荐 |
+| 12:00-14:00 | 🟢 低 | 推荐 |
+| 18:00-21:00 | 🟢 低 | 推荐 |
+| 22:00-24:00 | 🟡 中 | 可以 |
+| 00:00-02:00 | 🟡 中 | 谨慎 |
+| 02:00-06:00 | 🔴 高 | 避免 |
+
+---
+
+## 🔧 配置常量
+
+```python
+# X操作安全配置
+X_SAFETY_CONFIG = {
+    # 延迟配置（秒）
+    'delay_before_action': (10, 30),
+    'delay_after_action': (20, 60),
+    'delay_between_pages': (5, 15),
+    'delay_typing': (50, 150),  # 毫秒
+    
+    # 每日配额
+    'max_posts_per_day': 2,
+    'max_follows_per_day': 3,
+    'max_likes_per_day': 10,
+    'max_retweets_per_day': 3,
+    
+    # 会话配置
+    'max_actions_per_session': 3,
+    'max_session_duration': 600,  # 秒
+    'min_session_interval': 3600,  # 两次会话间隔（秒）
+    
+    # 操作间隔（秒）
+    'min_post_interval': 1800,    # 30分钟
+    'min_follow_interval': 120,   # 2分钟
+    'min_like_interval': 30,      # 30秒
+}
+```
+
+---
+
+**版本**: v2.0
 **创建时间**: 2026-02-09
-**最后更新**: 2026-02-09
+**最后更新**: 2026-02-09 07:50 UTC
+**原则**: 宁可慢，不可快；宁可少，不可多
