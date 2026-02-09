@@ -83,6 +83,18 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 
 > **黄金法则**：没有验证通过或百分百确认，**绝对不得修改 openclaw.json 文件**！
 
+### 🎯 【重要】输出大小控制规则
+
+**详见：`CRITICAL-OUTPUT-CONTROL.md`**
+
+> **核心原则**：主动控制所有工具输出大小，防止session累积过大导致400错误！
+
+**强制执行**：
+- ✅ read 必须加 `limit` 参数
+- ✅ 日志查看用 `grep` + `tail`  
+- ✅ 配置查看用 `jq` 提取
+- ✅ 单次输出 ≤2000字符
+
 - 修改 openclaw.json 极易导致 Gateway 断连/无限重启
 - 必须先查 Schema 确认字段存在
 - 用独立脚本能解决的问题，不要改配置
