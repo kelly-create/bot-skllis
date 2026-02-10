@@ -91,9 +91,42 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 
 **强制执行**：
 - ✅ read 必须加 `limit` 参数
-- ✅ 日志查看用 `grep` + `tail`  
+- ✅ 日志查看用 `grep` + `tail`
 - ✅ 配置查看用 `jq` 提取
 - ✅ 单次输出 ≤2000字符
+
+### 🔧 【重要】OpenClaw配置技巧
+
+#### 修改上下文大小
+- ❌ 不要改 `sessions.json` → Gateway重启会覆盖
+- ✅ 用 `agents.defaults.contextTokens` 配置字段
+- ✅ 用 `config.patch` 安全更新
+
+#### 模型名称必须精确
+- ❌ 不要猜模型名，先用API查询：`curl .../v1/models | jq '.data[].id'`
+- ✅ 例：`claude-opus-4-6-thinking` 而不是 `gemini-claude-opus-4-6-thinking`
+- ⚠️ 错误的模型名会导致502错误
+
+#### 查看所有可用配置字段
+- ✅ `gateway config.schema` → 查看完整schema
+- ✅ 关键字段：`agents.defaults.contextTokens`、`agents.defaults.model.primary`
+
+#### CLIProxyAPI升级流程
+1. 备份当前二进制：`cp cli-proxy-api cli-proxy-api.vX.X.X.backup`
+2. 查API获取下载链接：`curl -s "https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/tags/vX.X.X" | grep browser_download_url`
+3. 下载tar.gz（不是单独的二进制）
+4. 解压替换：`tar -xzf xxx.tar.gz cli-proxy-api`
+5. 重启服务：`systemctl restart cliproxyapi`
+6. ⚠️ **升级期间OpenClaw会断连** → 需要备用API路线
+
+### 📝 【重要】及时同步规则
+
+> **每次操作后**：必须将学到的技能、确定的规则、获得的配置及时同步到本地记忆文件和GitHub！
+
+**同步检查清单**：
+- [ ] 更新 `MEMORY.md`（长期规则/技能）
+- [ ] 更新 `memory/YYYY-MM-DD.md`（当日记录）
+- [ ] `git add -A && git commit && git push`
 
 - 修改 openclaw.json 极易导致 Gateway 断连/无限重启
 - 必须先查 Schema 确认字段存在
@@ -121,11 +154,35 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 
 ## 定时任务
 
-| 任务 | 时间 | 说明 |
-|------|------|------|
-| 每日全球热点简报 | 北京时间 09:00 | 发送到 k925138635@gmail.com |
-| pvew5 回帖 | 北京时间 09:00 | 皮特节点执行 |
-| xsijishe 签到 | 北京时间 08:00 | 皮特节点执行 |
+| 任务 | 时间(北京) | 节点 | 通知 |
+|------|-----------|------|------|
+| xsijishe签到 | 00:00 | 皮特 | ✅ Telegram |
+| pvew5回帖 | 01:00 | 皮特 | ✅ Telegram |
+| 每日全球热点简报 | 09:00 | 本地 | ✅ Telegram + 邮件 |
+| X每日任务-美国晚上 | 12:00 (04:00 UTC) | 萝卜 | ✅ Telegram |
+| X每日任务-美国中午 | 04:00次日 (20:00 UTC) | 萝卜 | ✅ Telegram |
+| Daily Git Sync | 08:00 (00:00 UTC) | 本地 | ✅ Telegram |
+
+## 当前模型配置
+
+| 模型ID | 上下文 | 用途 |
+|--------|-------|------|
+| claude-opus-4-6-thinking | 1M | **默认模型** |
+| gemini-claude-opus-4-5-thinking | 200k | 备用 |
+| gemini-claude-sonnet-4-5-thinking | 200k | 备用 |
+| gemini-claude-sonnet-4-5 | 200k | 备用 |
+| gemini-3-pro-preview | 200k | 备用 |
+| gpt-5.2-codex | 200k | subagent默认 |
+
+**API**: CLIProxyAPI v6.8.8 @ 萝卜节点  
+**contextTokens**: 1,000,000 (通过agents.defaults.contextTokens设置)
+
+## CLIProxyAPI版本
+
+- **当前**: v6.8.8 (2026-02-09)
+- **备份**: v6.8.5 在萝卜节点 `/root/cliproxyapi/cli-proxy-api.v6.8.5.backup`
+- **已知问题**: #1433 (280KB请求截断) 未修复
+- **升级策略**: 等#1433修复后再升级
 
 ## 凭证位置（已脱敏）
 
