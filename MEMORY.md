@@ -181,8 +181,14 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 
 - **当前**: v6.8.8 (2026-02-09)
 - **备份**: v6.8.5 在萝卜节点 `/root/cliproxyapi/cli-proxy-api.v6.8.5.backup`
-- **已知问题**: #1433 (280KB请求截断) 未修复
-- **升级策略**: 等#1433修复后再升级
+- **已知问题**: #1433 (280KB请求截断) - **实际是Nginx问题，非CPA问题**
+- **升级策略**: 已升级到v6.8.8
+
+### 280KB问题真相（2026-02-10确认）
+- ❌ **不是CPA的限制** - 开发者确认CPA上行无请求体大小限制，下行缓冲50MB
+- ✅ **是Nginx配置缺失** - `xiaoji.caopi.de.conf`没有设置`client_max_body_size`
+- ✅ **已修复** - 添加了`client_max_body_size 100M;`
+- 📝 **Nginx默认**：`client_max_body_size`默认1MB
 
 ## 凭证位置（已脱敏）
 
