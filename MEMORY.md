@@ -128,6 +128,8 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - [ ] 更新 `memory/YYYY-MM-DD.md`（当日记录）
 - [ ] `git add -A && git commit && git push`
 
+**2026-02-12补充教训**：出现“先回复用户、后补同步”的延迟，属于流程违规；今后必须在任务收尾阶段立刻完成本地+GitHub同步再汇报完成。
+
 - 修改 openclaw.json 极易导致 Gateway 断连/无限重启
 - 必须先查 Schema 确认字段存在
 - 用独立脚本能解决的问题，不要改配置

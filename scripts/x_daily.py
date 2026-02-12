@@ -195,20 +195,46 @@ async def main():
     print(f'🚀 X每日任务开始 - {datetime.now().strftime("%Y-%m-%d %H:%M")}')
     
     # 加载Cookie
-    with open(COOKIES_FILE) as f:
-        cookies = json.load(f)
-    
+    try:
+        with open(COOKIES_FILE) as f:
+            cookies = json.load(f)
+    except FileNotFoundError:
+        print(f"❌ Cookies文件不存在: {COOKIES_FILE}")
+        return
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
         context = await browser.new_context(viewport={'width': 1280, 'height': 900})
         await context.add_cookies(cookies)
         page = await context.new_page()
         
-        actions_done = 0
-        
+        # 强制调试截图 - 页面加载后立即查看状态
         try:
+            print("🌍 正在访问 X.com 首页...")
+            await page.goto('https://x.com/home', wait_until='networkidle', timeout=60000)
+            await asyncio.sleep(5)
+            
+            # 检查是否仍在登录页 (通常未登录会重定向到 x.com/ 或 x.com/i/flow/login)
+            current_url = page.url
+            print(f"🔗 当前URL: {current_url}")
+            
+            if 'login' in current_url or 'flow' in current_url:
+                print("❌ Cookies 已失效，被重定向到登录页！")
+                print("📸 正在保存失效截图...")
+                await page.screenshot(path='/root/.openclaw/workspace/scripts/cookie_expired.png')
+                await browser.close()
+                return
+
+            # 无论如何先截图看看当前页面长什么样
+            screenshot_path = '/root/.openclaw/workspace/scripts/current_page.png'
+            await page.screenshot(path=screenshot_path)
+            print(f"📸 页面截图已保存: {screenshot_path}")
+
+            actions_done = 0
+            
             # 随机选择操作类型
             action_type = random.choice(['post', 'retweet', 'like'])
+            print(f"🎲 本次随机任务: {action_type}")
             
             if action_type == 'post':
                 # 发布原创内容
@@ -222,20 +248,24 @@ async def main():
                 # 转发内容
                 candidates = await get_trending_content(page)
                 if candidates:
+                    print(f"✅ 找到 {len(candidates)} 个候选内容")
                     candidate = random.choice(candidates[:3])
                     await retweet_post(page, candidate['index'])
                     actions_done += 1
+                else:
+                    print("⚠️ 未找到任何可转发的内容")
                     
             elif action_type == 'like':
                 # 点赞
-                await page.goto('https://x.com/home', wait_until='domcontentloaded')
-                await asyncio.sleep(5)
-                await simulate_human(page)
-                
                 # 随机点赞1-2条
                 for i in range(random.randint(1, 2)):
                     if actions_done >= MAX_ACTIONS:
                         break
+                    # 重新确保在首页
+                    if page.url != 'https://x.com/home':
+                        await page.goto('https://x.com/home', wait_until='networkidle')
+                        await asyncio.sleep(5)
+                        
                     await like_post(page, random.randint(0, 5))
                     actions_done += 1
             
@@ -243,6 +273,8 @@ async def main():
             
         except Exception as e:
             print(f'❌ 错误: {e}')
+            print('📸 发生错误，正在截图...')
+            await page.screenshot(path='/root/.openclaw/workspace/scripts/error_screenshot.png')
         
         await browser.close()
     
