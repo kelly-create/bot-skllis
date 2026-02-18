@@ -197,3 +197,14 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - Gmail: `scripts/gmail_client.py` (zbobo9001@gmail.com)
 - 和风天气 API: `scripts/qweather.py`
 - 皮特 .env: `/root/.openclaw/workspace/.env`
+
+## 2026-02-18 关键运维结论（X 自动任务）
+
+- ⚠️ 当前版本周期 cron（`kind=cron`）存在“`nextRunAtMs`滚动但不落 `runs` 执行记录”的漏触发风险。
+- ✅ `kind=at` 一次性任务可稳定自动执行并写入 `/root/.openclaw/cron/runs/*.jsonl`。
+- ✅ 已临时重构：
+  - 关闭旧的两条周期 X 任务（`0cdb...`、`ba97...`）。
+  - 改为“AT 预排程”7天窗口（中午20:00 UTC + 晚上04:00 UTC），每次都带 Telegram 回报。
+- ✅ X 执行链路统一为 SSH 直连萝卜执行 `python3 -u /root/x_daily.py`。
+- ✅ 汇报规范：必须拿到最终 rc（禁止“still running”提前报成功）。
+- 后续：修复周期 cron 漏触发后，再考虑迁回 `kind=cron`。
