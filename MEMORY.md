@@ -208,3 +208,4 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ X 执行链路统一为 SSH 直连萝卜执行 `python3 -u /root/x_daily.py`。
 - ✅ 汇报规范：必须拿到最终 rc（禁止“still running”提前报成功）。
 - 后续：修复周期 cron 漏触发后，再考虑迁回 `kind=cron`。
+- 🔴 追加（同日）：用户确认 X 账号已冻结后，已紧急停用全部 X 自动任务（含 AT 预排程），先人工解封与通过安全验证，再恢复自动化。
