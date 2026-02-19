@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import threading
 import time
+import shutil
 from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
@@ -561,6 +562,34 @@ def stop_task(task_id: int):
         flash(f"任务 #{task_id} 已停止")
     except Exception as e:
         flash(f"停止失败: {e}")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.post("/tasks/<int:task_id>/delete")
+@login_required
+def delete_task(task_id: int):
+    task = get_task(task_id)
+    if not task:
+        flash("任务不存在")
+        return redirect(url_for("dashboard"))
+
+    if task_id in running_processes:
+        flash(f"任务 #{task_id} 正在运行或排队中，请先停止后再删除")
+        return redirect(url_for("dashboard"))
+
+    try:
+        with db_conn() as conn:
+            conn.execute("DELETE FROM task_logs WHERE task_id=?", (task_id,))
+            conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
+
+        task_dir = os.path.join(ARTIFACT_ROOT, f"task_{task_id}")
+        if os.path.isdir(task_dir):
+            shutil.rmtree(task_dir, ignore_errors=True)
+
+        flash(f"任务 #{task_id} 已删除（含日志和任务附件/产物）")
+    except Exception as e:
+        flash(f"删除任务失败: {e}")
 
     return redirect(url_for("dashboard"))
 

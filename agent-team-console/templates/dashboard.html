@@ -141,6 +141,7 @@
         <li><b>启动</b>：把任务放入执行队列；并发满时会自动排队。</li>
         <li><b>停止</b>：中止当前任务并标记为 failed（返回码 143/137）。</li>
         <li><b>重置</b>：把 done/failed 任务恢复成 pending，便于二次执行。</li>
+        <li><b>删除</b>：删除任务记录、日志以及该任务的附件/产物目录（运行中任务需先停止）。</li>
         <li><b>任务详情页</b>：可看完整日志，页面每 4 秒自动刷新。</li>
         <li><b>状态说明</b>：pending=待执行，running=执行中，done=成功，failed=失败。</li>
       </ul>
@@ -169,10 +170,11 @@
             </td>
             <td>{{ t.return_code if t.return_code is not none else '-' }}</td>
             <td>{{ t.updated_at }}</td>
-            <td class="d-flex gap-1">
+            <td class="d-flex gap-1 flex-wrap">
               <form method="post" action="{{ url_for('start_task_route', task_id=t.id) }}"><button class="btn btn-sm btn-outline-primary">启动</button></form>
               <form method="post" action="{{ url_for('stop_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-danger">停止</button></form>
               <form method="post" action="{{ url_for('retry_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-secondary">重置</button></form>
+              <form method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('确认删除任务 #{{ t.id }} 吗？将同时删除日志和该任务附件/产物。');"><button class="btn btn-sm btn-danger">删除</button></form>
             </td>
           </tr>
         {% endfor %}
