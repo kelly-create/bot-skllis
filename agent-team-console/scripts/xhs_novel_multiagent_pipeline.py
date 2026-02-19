@@ -14,8 +14,10 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import zipfile
 from datetime import datetime
 
 NOISE_PATTERNS = [
@@ -65,6 +67,7 @@ def parse_args():
     p.add_argument("--min-usable", type=int, default=8)
     p.add_argument("--min-domain-ratio", type=float, default=0.75)
     p.add_argument("--max-noise-ratio", type=float, default=0.35)
+    p.add_argument("--pack-format", choices=["zip", "7z"], default="zip", help="压缩格式：zip 或 7z")
     return p.parse_args()
 
 
@@ -131,6 +134,28 @@ def write_pure_report(raw_report: dict, pure_top_words, out_md: str, out_json: s
     os.makedirs(os.path.dirname(os.path.abspath(out_md)), exist_ok=True)
     with open(out_md, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
+
+
+def pack_outputs(output_dir: str, files: list[str], pack_format: str):
+    if pack_format == "7z":
+        seven_zip = shutil.which("7z")
+        if seven_zip:
+            out_path = os.path.join(output_dir, "小说类目_爆款文包_纯化版.7z")
+            cmd = [seven_zip, "a", "-t7z", out_path] + [os.path.join(output_dir, f) for f in files]
+            rc = subprocess.call(cmd)
+            if rc == 0:
+                return out_path
+            log("Packager Agent", "7z 打包失败，回退到 zip")
+        else:
+            log("Packager Agent", "系统未安装 7z，回退到 zip")
+
+    out_path = os.path.join(output_dir, "小说类目_爆款文包_纯化版.zip")
+    with zipfile.ZipFile(out_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for f in files:
+            full = os.path.join(output_dir, f)
+            if os.path.exists(full):
+                zf.write(full, arcname=f)
+    return out_path
 
 
 def main():
@@ -215,25 +240,25 @@ def main():
             selected_json = out_json
             selected_report = report
 
+    audit_path = os.path.join(args.output_dir, "小说类目_多Agent复核_审计.json")
     if selected_report is None:
         audit["decision"] = {"result": "fail", "reason": "all rounds unusable"}
-        with open(os.path.join(args.output_dir, "xhs_novel_audit.json"), "w", encoding="utf-8") as f:
+        with open(audit_path, "w", encoding="utf-8") as f:
             json.dump(audit, f, ensure_ascii=False, indent=2)
         log("Lead Agent", "所有轮次均未通过，且无可用候选数据")
         sys.exit(2)
 
-    # Cleaner Agent: 输出纯化版词表
-    final_md = os.path.join(args.output_dir, "xhs_novel_keywords_pure.md")
-    final_json = os.path.join(args.output_dir, "xhs_novel_keywords_pure.json")
+    # Cleaner Agent: 输出纯化版词表（中文文件名）
+    final_md = os.path.join(args.output_dir, "小说类目_高频词_纯化版.md")
+    final_json = os.path.join(args.output_dir, "小说类目_高频词_纯化版.json")
 
     pure_top = refine_top_words(selected_report.get("topWords", []))
     write_pure_report(selected_report, pure_top, final_md, final_json)
     log("Cleaner Agent", f"纯化词表已生成：{final_md}")
 
-    # Packager Agent: 生成文包
-    hot_md = os.path.join(args.output_dir, "xhs_novel_hotpack_pure.md")
-    hot_json = os.path.join(args.output_dir, "xhs_novel_hotpack_pure.json")
-    pack_tgz = os.path.join(args.output_dir, "xhs_novel_pack_pure.tar.gz")
+    # Packager Agent: 生成文包（中文文件名）
+    hot_md = os.path.join(args.output_dir, "小说类目_爆款文包_纯化版.md")
+    hot_json = os.path.join(args.output_dir, "小说类目_爆款文包_纯化版.json")
 
     cmd_pack = (
         "python3 scripts/build_novel_pack.py "
@@ -244,14 +269,11 @@ def main():
         log("Packager Agent", "文包生成失败")
         sys.exit(3)
 
-    cmd_tar = (
-        f"tar -czf '{pack_tgz}' -C '{args.output_dir}' "
-        "xhs_novel_keywords_pure.md xhs_novel_keywords_pure.json xhs_novel_hotpack_pure.md xhs_novel_hotpack_pure.json"
+    pack_path = pack_outputs(
+        args.output_dir,
+        ["小说类目_高频词_纯化版.md", "小说类目_高频词_纯化版.json", "小说类目_爆款文包_纯化版.md", "小说类目_爆款文包_纯化版.json"],
+        args.pack_format,
     )
-    rc_tar = run_stream(cmd_tar, cwd=args.workdir)
-    if rc_tar != 0:
-        log("Packager Agent", "文包打包失败")
-        sys.exit(4)
 
     audit["finishedAt"] = ts()
     audit["outputs"] = {
@@ -259,12 +281,12 @@ def main():
         "keywordsJson": final_json,
         "hotpackMd": hot_md,
         "hotpackJson": hot_json,
-        "pack": pack_tgz,
+        "pack": pack_path,
     }
-    with open(os.path.join(args.output_dir, "xhs_novel_audit.json"), "w", encoding="utf-8") as f:
+    with open(audit_path, "w", encoding="utf-8") as f:
         json.dump(audit, f, ensure_ascii=False, indent=2)
 
-    log("Lead Agent", "多Agent流水线完成")
+    log("Lead Agent", f"多Agent流水线完成，压缩包：{pack_path}")
 
 
 if __name__ == "__main__":
