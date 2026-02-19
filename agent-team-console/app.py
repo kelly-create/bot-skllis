@@ -16,7 +16,7 @@ ADMIN_USERNAME = os.getenv("ATC_ADMIN_USERNAME", "root")
 ADMIN_PASSWORD = os.getenv("ATC_ADMIN_PASSWORD", "k5348988")
 APP_SECRET = os.getenv("ATC_APP_SECRET", "change-me-now")
 WORKDIR = os.getenv("ATC_WORKDIR", BASE_DIR)
-MAX_CONCURRENT = int(os.getenv("ATC_MAX_CONCURRENT", "4"))
+DEFAULT_MAX_CONCURRENT = int(os.getenv("ATC_MAX_CONCURRENT", "4"))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
@@ -24,7 +24,43 @@ app = Flask(__name__)
 app.secret_key = APP_SECRET
 
 running_processes = {}
-semaphore = threading.Semaphore(MAX_CONCURRENT)
+
+
+class ConcurrencyLimiter:
+    def __init__(self, limit: int):
+        self._limit = max(1, int(limit))
+        self._running = 0
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+
+    @contextmanager
+    def acquire(self):
+        with self._cond:
+            while self._running >= self._limit:
+                self._cond.wait(timeout=1)
+            self._running += 1
+        try:
+            yield
+        finally:
+            with self._cond:
+                self._running -= 1
+                self._cond.notify_all()
+
+    def set_limit(self, limit: int):
+        with self._cond:
+            self._limit = max(1, int(limit))
+            self._cond.notify_all()
+
+    def get_limit(self) -> int:
+        with self._lock:
+            return self._limit
+
+    def get_running(self) -> int:
+        with self._lock:
+            return self._running
+
+
+limiter = ConcurrencyLimiter(DEFAULT_MAX_CONCURRENT)
 
 
 def now_str():
@@ -74,6 +110,45 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+
+
+def get_setting(key: str, default_value: str = "") -> str:
+    with db_conn() as conn:
+        row = conn.execute("SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+    if not row:
+        return default_value
+    return row["value"]
+
+
+def set_setting(key: str, value: str):
+    with db_conn() as conn:
+        conn.execute(
+            """
+            INSERT INTO app_settings(key, value, updated_at)
+            VALUES(?,?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+            """,
+            (key, str(value), now_str()),
+        )
+
+
+def sync_runtime_settings():
+    raw = get_setting("max_concurrent", str(DEFAULT_MAX_CONCURRENT))
+    try:
+        val = max(1, min(16, int(raw)))
+    except Exception:
+        val = DEFAULT_MAX_CONCURRENT
+    set_setting("max_concurrent", str(val))
+    limiter.set_limit(val)
 
 
 def append_log(task_id: int, line: str):
@@ -113,15 +188,15 @@ def login_required(fn):
 def run_task(task_id: int):
     task = get_task(task_id)
     if not task:
+        running_processes.pop(task_id, None)
         return
 
-    with semaphore:
+    with limiter.acquire():
         update_task(task_id, status="running", started_at=now_str(), return_code=None)
-        append_log(task_id, f"[SYSTEM] 任务启动，worker 并发上限={MAX_CONCURRENT}")
+        append_log(task_id, f"[SYSTEM] 任务启动，当前并发上限={limiter.get_limit()}")
 
         cmd = (task["command"] or "").strip()
         if not cmd:
-            # 无命令时给一个可见进度流程，便于先用起来
             try:
                 for step in [
                     "Lead Agent 正在拆解任务...",
@@ -179,28 +254,33 @@ def run_task(task_id: int):
 
 def start_task(task_id: int):
     if task_id in running_processes:
-        return False, "任务已在运行"
+        return False, "任务已在运行或排队中"
     task = get_task(task_id)
     if not task:
         return False, "任务不存在"
     if task["status"] == "running":
         return False, "任务状态已是 running"
 
-    # None 表示“占位启动中”
     running_processes[task_id] = None
     t = threading.Thread(target=run_task, args=(task_id,), daemon=True)
     t.start()
-    return True, "已启动"
+    return True, "已启动（如并发已满会自动排队）"
 
 
 @app.before_request
 def _attach_globals():
-    g.max_concurrent = MAX_CONCURRENT
+    g.max_concurrent = limiter.get_limit()
+    g.active_workers = limiter.get_running()
 
 
 @app.route("/healthz")
 def healthz():
-    return {"ok": True, "time": now_str(), "maxConcurrent": MAX_CONCURRENT}
+    return {
+        "ok": True,
+        "time": now_str(),
+        "maxConcurrent": limiter.get_limit(),
+        "activeWorkers": limiter.get_running(),
+    }
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -237,7 +317,34 @@ def dashboard():
             "failed": conn.execute("SELECT COUNT(*) c FROM tasks WHERE status='failed'").fetchone()["c"],
         }
 
-    return render_template("dashboard.html", tasks=tasks, stats=stats, running_count=len(running_processes))
+    queue_count = max(0, len(running_processes) - limiter.get_running())
+    return render_template(
+        "dashboard.html",
+        tasks=tasks,
+        stats=stats,
+        running_count=len(running_processes),
+        queue_count=queue_count,
+    )
+
+
+@app.post("/settings/concurrency")
+@login_required
+def set_concurrency():
+    raw = (request.form.get("max_concurrent") or "").strip()
+    try:
+        val = int(raw)
+    except Exception:
+        flash("并发上限必须是数字（1-16）")
+        return redirect(url_for("dashboard"))
+
+    if val < 1 or val > 16:
+        flash("并发上限范围必须在 1-16")
+        return redirect(url_for("dashboard"))
+
+    set_setting("max_concurrent", str(val))
+    limiter.set_limit(val)
+    flash(f"并发上限已更新为 {val}（即时生效，无需重启）")
+    return redirect(url_for("dashboard"))
 
 
 @app.post("/tasks")
@@ -296,7 +403,6 @@ def retry_task(task_id: int):
 def stop_task(task_id: int):
     proc = running_processes.get(task_id)
     if proc is None and task_id in running_processes:
-        # 启动阶段占位
         running_processes.pop(task_id, None)
         update_task(task_id, status="failed", finished_at=now_str(), return_code=137)
         append_log(task_id, "[SYSTEM] 任务在启动阶段被停止")
@@ -343,6 +449,8 @@ def api_tasks():
 
 if __name__ == "__main__":
     init_db()
+    sync_runtime_settings()
     app.run(host="127.0.0.1", port=3100, debug=False)
 else:
     init_db()
+    sync_runtime_settings()

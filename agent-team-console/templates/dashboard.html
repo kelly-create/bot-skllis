@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Agent Team Console</title>
+  <title>Agent Team 控制台</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <meta http-equiv="refresh" content="6">
 </head>
@@ -11,7 +11,10 @@
 <nav class="navbar navbar-dark bg-dark">
   <div class="container-fluid">
     <span class="navbar-brand">Agent Team 控制台</span>
-    <div class="text-white small">并发上限: {{ g.max_concurrent }} | 运行中: {{ running_count }} | <a class="text-white" href="{{ url_for('logout') }}">退出</a></div>
+    <div class="text-white small">
+      并发上限: {{ g.max_concurrent }} ｜ 活跃执行: {{ g.active_workers }} ｜ 排队中: {{ queue_count }} ｜
+      <a class="text-white" href="{{ url_for('logout') }}">退出</a>
+    </div>
   </div>
 </nav>
 
@@ -29,37 +32,69 @@
     <div class="col-md-3"><div class="card"><div class="card-body">失败 <h3>{{ stats.failed }}</h3></div></div></div>
   </div>
 
+  <div class="card mb-3 border-primary">
+    <div class="card-header bg-primary text-white">系统设置</div>
+    <div class="card-body">
+      <form class="row g-2 align-items-end" method="post" action="{{ url_for('set_concurrency') }}">
+        <div class="col-md-3">
+          <label class="form-label">并发上限（即时生效）</label>
+          <input type="number" class="form-control" min="1" max="16" name="max_concurrent" value="{{ g.max_concurrent }}" required>
+        </div>
+        <div class="col-md-9">
+          <div class="small text-muted mb-2">建议范围：2-6。你的服务器当前建议先用 4；负载稳定后可提高。超高并发会导致任务超时和失败率上升。</div>
+          <button class="btn btn-primary">保存并发设置</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="card mb-3">
     <div class="card-header">新建任务</div>
     <div class="card-body">
       <form method="post" action="{{ url_for('create_task') }}">
         <div class="row g-2">
-          <div class="col-md-4"><input class="form-control" name="title" placeholder="任务标题" required /></div>
+          <div class="col-md-4"><input class="form-control" name="title" placeholder="任务标题（必填）" required /></div>
           <div class="col-md-2">
-            <select class="form-select" name="task_type">
+            <select class="form-select" name="task_type" title="任务类型">
               <option>backend</option><option>frontend</option><option>qa</option><option>release</option>
-              <option>research</option><option>db</option><option>ops</option><option selected>general</option>
+              <option>research</option><option>db</option><option>ops</option><option>debug</option><option>docs</option><option selected>general</option>
             </select>
           </div>
           <div class="col-md-2">
-            <select class="form-select" name="assignee">
+            <select class="form-select" name="assignee" title="执行角色">
               <option>Lead Agent</option><option>@backend-integrator</option><option>@frontend-polisher</option>
-              <option>@qa-engineer</option><option>@release-manager</option>
+              <option>@qa-engineer</option><option>@release-manager</option><option>@research-analyst</option>
             </select>
           </div>
           <div class="col-md-1">
             <select class="form-select" name="priority"><option>P0</option><option>P1</option><option selected>P2</option><option>P3</option></select>
           </div>
-          <div class="col-md-3"><input class="form-control" name="description" placeholder="简述（可选）" /></div>
+          <div class="col-md-3"><input class="form-control" name="description" placeholder="需求说明（建议写验收标准）" /></div>
         </div>
         <div class="row g-2 mt-2">
           <div class="col-12">
-            <input class="form-control" name="command" placeholder="执行命令（可选）。留空=演示模式任务" />
-            <div class="form-text">示例：python3 scripts/run_tests.py 或 npm run build</div>
+            <input class="form-control" name="command" placeholder="执行命令（可选）。留空=演示任务流程" />
+            <div class="form-text">
+              示例：<code>python3 scripts/run_tests.py</code> ｜ <code>npm run build</code> ｜ <code>pytest -q</code>。
+              建议为每个任务提供可重复执行的命令，便于回归和重试。
+            </div>
           </div>
         </div>
         <button class="btn btn-primary mt-2">创建任务</button>
       </form>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-header">操作提示（中文）</div>
+    <div class="card-body small">
+      <ul class="mb-0">
+        <li><b>启动</b>：把任务放入执行队列；并发满时会自动排队。</li>
+        <li><b>停止</b>：中止当前任务并标记为 failed（返回码 143/137）。</li>
+        <li><b>重置</b>：把 done/failed 任务恢复成 pending，便于二次执行。</li>
+        <li><b>任务详情页</b>：可看完整日志，页面每 4 秒自动刷新。</li>
+        <li><b>状态说明</b>：pending=待执行，running=执行中，done=成功，failed=失败。</li>
+      </ul>
     </div>
   </div>
 
@@ -77,10 +112,10 @@
             <td>{{ t.assignee }}</td>
             <td>{{ t.priority }}</td>
             <td>
-              {% if t.status == 'running' %}<span class="badge bg-warning text-dark">running</span>
-              {% elif t.status == 'done' %}<span class="badge bg-success">done</span>
-              {% elif t.status == 'failed' %}<span class="badge bg-danger">failed</span>
-              {% else %}<span class="badge bg-secondary">pending</span>{% endif %}
+              {% if t.status == 'running' %}<span class="badge bg-warning text-dark">运行中</span>
+              {% elif t.status == 'done' %}<span class="badge bg-success">完成</span>
+              {% elif t.status == 'failed' %}<span class="badge bg-danger">失败</span>
+              {% else %}<span class="badge bg-secondary">待办</span>{% endif %}
             </td>
             <td>{{ t.return_code if t.return_code is not none else '-' }}</td>
             <td>{{ t.updated_at }}</td>
