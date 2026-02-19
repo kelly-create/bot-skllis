@@ -1,0 +1,19 @@
+[Unit]
+Description=Agent Team Console
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/agent-team-console
+Environment=ATC_ADMIN_USERNAME=root
+Environment=ATC_ADMIN_PASSWORD=k5348988
+Environment=ATC_APP_SECRET=replace-with-random-secret
+Environment=ATC_MAX_CONCURRENT=4
+Environment=ATC_WORKDIR=/opt/agent-team-console
+Environment=ATC_DB_PATH=/opt/agent-team-console/data/tasks.db
+ExecStart=/opt/agent-team-console/.venv/bin/gunicorn -w 1 -k gthread --threads 8 -b 127.0.0.1:3100 app:app
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
