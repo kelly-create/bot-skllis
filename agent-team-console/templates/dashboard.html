@@ -86,12 +86,38 @@
         <div class="form-text mt-1">
           任务类型用于分类统计与筛选；执行角色用于标记责任归属（便于后续按角色追踪进度）。
         </div>
+        <div class="row g-2 mt-2 border rounded p-2 bg-light-subtle">
+          <div class="col-md-4">
+            <label class="form-label mb-1">业务模板（新手推荐）</label>
+            <select id="template_select" class="form-select form-select-sm">
+              <option value="">请选择模板（可选）</option>
+              <option data-cmd="cd __PROJECT_DIR__ && git pull && pytest -q" data-desc="拉取最新代码并执行后端回归测试">后端回归测试（git pull + pytest）</option>
+              <option data-cmd="cd __PROJECT_DIR__ && npm install && npm run build" data-desc="安装依赖并执行前端构建验证">前端构建验证（npm install + build）</option>
+              <option data-cmd="cd __PROJECT_DIR__ && python3 manage.py migrate" data-desc="执行数据库迁移">数据库迁移（migrate）</option>
+              <option data-cmd="cd __PROJECT_DIR__ && docker compose ps && docker compose logs --tail=80" data-desc="检查容器状态并抓取最近日志">服务巡检（compose 状态+日志）</option>
+              <option data-cmd="cd __PROJECT_DIR__ && python3 scripts/daily_report_wrapper.py" data-desc="执行每日简报脚本">日报任务（Python 脚本）</option>
+            </select>
+          </div>
+          <div class="col-md-5">
+            <label class="form-label mb-1">项目路径（模板变量）</label>
+            <input id="project_dir" class="form-control form-control-sm" value="/root/.openclaw/workspace" placeholder="例如 /root/your-project" />
+          </div>
+          <div class="col-md-3 d-grid">
+            <label class="form-label mb-1">快速操作</label>
+            <button type="button" class="btn btn-outline-primary btn-sm" onclick="fillTemplateToCommand()">一键填充到命令框</button>
+          </div>
+          <div class="col-12">
+            <div class="form-text">先选模板，再填项目路径，点“一键填充”。不懂命令时优先用这个方式。</div>
+          </div>
+        </div>
+
         <div class="row g-2 mt-2">
           <div class="col-12">
-            <input class="form-control" name="command" placeholder="执行命令（可选）。留空=演示任务流程" />
+            <label class="form-label mb-1">高级模式：自定义命令（懂命令时再填）</label>
+            <input id="command_input" class="form-control" name="command" placeholder="留空=演示任务流程（不会执行真实业务）" />
             <div class="form-text">
-              示例：<code>python3 scripts/run_tests.py</code> ｜ <code>npm run build</code> ｜ <code>pytest -q</code>。
-              建议为每个任务提供可重复执行的命令，便于回归和重试。
+              示例：<code>cd /root/your-project && pytest -q</code> ｜ <code>cd /root/your-project && npm run build</code>。
+              若你是新手，建议先使用上面的“业务模板”自动生成命令。
             </div>
           </div>
         </div>
@@ -146,5 +172,26 @@
     </div>
   </div>
 </div>
+<script>
+function fillTemplateToCommand() {
+  const sel = document.getElementById('template_select');
+  const pathInput = document.getElementById('project_dir');
+  const cmdInput = document.getElementById('command_input');
+  const descInput = document.querySelector('input[name="description"]');
+  if (!sel || !cmdInput) return;
+  const opt = sel.options[sel.selectedIndex];
+  const raw = opt?.getAttribute('data-cmd');
+  const desc = opt?.getAttribute('data-desc');
+  if (!raw) {
+    alert('请先选择一个业务模板');
+    return;
+  }
+  const projectDir = (pathInput?.value || '/root/.openclaw/workspace').trim();
+  cmdInput.value = raw.replaceAll('__PROJECT_DIR__', projectDir);
+  if (descInput && !descInput.value && desc) {
+    descInput.value = desc;
+  }
+}
+</script>
 </body>
 </html>
