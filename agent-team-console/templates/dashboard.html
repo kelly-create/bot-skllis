@@ -56,20 +56,35 @@
           <div class="col-md-4"><input class="form-control" name="title" placeholder="任务标题（必填）" required /></div>
           <div class="col-md-2">
             <select class="form-select" name="task_type" title="任务类型">
-              <option>backend</option><option>frontend</option><option>qa</option><option>release</option>
-              <option>research</option><option>db</option><option>ops</option><option>debug</option><option>docs</option><option selected>general</option>
+              <option value="general" selected>general（通用任务）</option>
+              <option value="backend">backend（后端接口开发）</option>
+              <option value="frontend">frontend（前端页面开发）</option>
+              <option value="qa">qa（测试与回归）</option>
+              <option value="release">release（发布部署）</option>
+              <option value="research">research（技术调研）</option>
+              <option value="db">db（数据库与迁移）</option>
+              <option value="ops">ops（运维与环境）</option>
+              <option value="debug">debug（故障排查）</option>
+              <option value="docs">docs（文档整理）</option>
             </select>
           </div>
           <div class="col-md-2">
             <select class="form-select" name="assignee" title="执行角色">
-              <option>Lead Agent</option><option>@backend-integrator</option><option>@frontend-polisher</option>
-              <option>@qa-engineer</option><option>@release-manager</option><option>@research-analyst</option>
+              <option value="Lead Agent">Lead Agent（总控/分派）</option>
+              <option value="@backend-integrator">@backend-integrator（后端专家）</option>
+              <option value="@frontend-polisher">@frontend-polisher（前端专家）</option>
+              <option value="@qa-engineer">@qa-engineer（测试专家）</option>
+              <option value="@release-manager">@release-manager（发布专家）</option>
+              <option value="@research-analyst">@research-analyst（调研专家）</option>
             </select>
           </div>
           <div class="col-md-1">
             <select class="form-select" name="priority"><option>P0</option><option>P1</option><option selected>P2</option><option>P3</option></select>
           </div>
           <div class="col-md-3"><input class="form-control" name="description" placeholder="需求说明（建议写验收标准）" /></div>
+        </div>
+        <div class="form-text mt-1">
+          任务类型用于分类统计与筛选；执行角色用于标记责任归属（便于后续按角色追踪进度）。
         </div>
         <div class="row g-2 mt-2">
           <div class="col-12">
