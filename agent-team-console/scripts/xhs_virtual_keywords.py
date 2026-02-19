@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
 小红书虚拟产品类目高频词采集（公开页面）
-- 通过关键词搜索页抓取可见文本
-- 统计中文高频词并输出 markdown/json
+
+重要说明：
+- 小红书网页端常触发风控/验证页，可能导致“采样文本无效”。
+- 本脚本会识别风控页面并剔除无效文本，避免输出“安全限制”等伪高频词。
+- strict 模式下，若有效采样源过少会返回非0退出码，提醒结果不可信。
 """
 
 import argparse
@@ -10,6 +13,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 from collections import Counter
 from datetime import datetime
 from urllib.parse import quote
@@ -34,26 +38,51 @@ STOPWORDS = {
     "教程", "课程", "模板", "资料", "产品", "虚拟", "数字", "素材", "工具", "方法", "经验",
 }
 
+RISK_TERMS = [
+    "安全限制",
+    "存在风险",
+    "请切换可靠网络环境",
+    "我要反馈",
+    "返回首页",
+    "验证码",
+    "验证",
+    "访问受限",
+]
+
 
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--keywords", default=",".join(DEFAULT_KEYWORDS), help="逗号分隔关键词")
     p.add_argument("--scrolls", type=int, default=5, help="每个关键词滚动次数")
     p.add_argument("--max-top", type=int, default=80, help="输出高频词数量")
+    p.add_argument("--strict", action="store_true", help="严格模式：采样不足时返回非0")
+    p.add_argument("--min-usable", type=int, default=3, help="strict 模式最低有效采样源")
     p.add_argument("--out-md", default=os.path.join(os.getenv("TASK_OUTPUT_DIR", "."), "xhs_virtual_keywords.md"))
     p.add_argument("--out-json", default=os.path.join(os.getenv("TASK_OUTPUT_DIR", "."), "xhs_virtual_keywords.json"))
     p.add_argument("--headful", action="store_true", help="启用有界面浏览器")
     return p.parse_args()
 
 
+def is_risk_text(text: str) -> bool:
+    if not text:
+        return True
+    hit = 0
+    for t in RISK_TERMS:
+        if t in text:
+            hit += 1
+    # 命中多个风控词，判定为无效页
+    return hit >= 2
+
+
 def extract_words(text: str):
-    # 先提取中文短语，再粗分词
     phrases = re.findall(r"[\u4e00-\u9fff]{2,8}", text)
     words = []
     for ph in phrases:
         if ph in STOPWORDS:
             continue
         if ph.startswith("http"):
+            continue
+        if any(rt in ph for rt in RISK_TERMS):
             continue
         words.append(ph)
     return words
@@ -77,23 +106,30 @@ async def crawl_keywords(keywords, scrolls=5, headful=False):
                 continue
             url = f"https://www.xiaohongshu.com/search_result?keyword={quote(kw)}&source=web_explore_feed"
             print(f"[INFO] 抓取关键词: {kw}")
+            item = {"keyword": kw, "url": url, "text": "", "blocked": False, "error": None}
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 await asyncio.sleep(4)
+
                 for _ in range(max(0, scrolls)):
-                    await page.evaluate("window.scrollBy(0, 800)")
-                    await asyncio.sleep(1.2)
+                    try:
+                        await page.evaluate("window.scrollBy(0, 800)")
+                        await asyncio.sleep(1.2)
+                    except Exception:
+                        # 可能发生页面重定向导致上下文失效，继续等待并重试下一轮
+                        await asyncio.sleep(1.5)
 
                 body = await page.inner_text("body")
-                body = body[:300000]
-                results.append({"keyword": kw, "url": url, "text": body})
-
-                low = body.lower()
-                if ("登录" in body and "查看更多" in body) or ("验证码" in body) or ("验证" in body and "安全" in body):
-                    print(f"[WARN] 关键词[{kw}] 可能触发登录/验证限制，文本可能不完整")
+                body = (body or "")[:300000]
+                item["text"] = body
+                if is_risk_text(body):
+                    item["blocked"] = True
+                    print(f"[WARN] 关键词[{kw}] 命中风控/验证页面，已标记为无效采样")
             except Exception as e:
+                item["error"] = str(e)
                 print(f"[ERROR] 关键词[{kw}] 抓取失败: {e}")
-                results.append({"keyword": kw, "url": url, "text": "", "error": str(e)})
+
+            results.append(item)
 
         await browser.close()
 
@@ -103,9 +139,24 @@ async def crawl_keywords(keywords, scrolls=5, headful=False):
 def build_report(raw_items, max_top=80):
     counter = Counter()
     total_chars = 0
+    usable_sources = 0
+    blocked_sources = 0
 
     for item in raw_items:
         txt = item.get("text", "") or ""
+        blocked = bool(item.get("blocked"))
+        err = item.get("error")
+
+        if blocked:
+            blocked_sources += 1
+            continue
+        if err:
+            continue
+        if len(txt) < 80:
+            # 文本过短也视为不可靠
+            continue
+
+        usable_sources += 1
         total_chars += len(txt)
         for w in extract_words(txt):
             counter[w] += 1
@@ -115,6 +166,8 @@ def build_report(raw_items, max_top=80):
         "generatedAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
         "keywords": [x.get("keyword") for x in raw_items],
         "sourceCount": len(raw_items),
+        "usableSourceCount": usable_sources,
+        "blockedSourceCount": blocked_sources,
         "totalChars": total_chars,
         "topWords": [{"word": k, "count": v} for k, v in top],
     }
@@ -129,23 +182,33 @@ def write_outputs(report, raw_items, out_md, out_json):
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     lines = []
-    lines.append(f"# 小红书虚拟产品高频词报告\n")
+    lines.append("# 小红书虚拟产品高频词报告\n")
     lines.append(f"- 生成时间：{report['generatedAt']}")
     lines.append(f"- 关键词：{', '.join(report['keywords'])}")
     lines.append(f"- 采样源数量：{report['sourceCount']}")
-    lines.append(f"- 抓取文本总长度：{report['totalChars']}\n")
+    lines.append(f"- 有效采样源：{report['usableSourceCount']}")
+    lines.append(f"- 风控/拦截源：{report['blockedSourceCount']}")
+    lines.append(f"- 有效文本总长度：{report['totalChars']}\n")
+
+    if report["usableSourceCount"] == 0:
+        lines.append("## 结果有效性\n")
+        lines.append("⚠️ 本次采样基本被风控拦截，结果不具参考价值。建议使用登录态 Cookie 或降低频率后重试。\n")
+
     lines.append("## 高频词 TOP\n")
     if not report["topWords"]:
-        lines.append("（未采集到可用词汇，可能被登录/风控拦截）\n")
+        lines.append("（未采集到可用词汇）\n")
     else:
         for i, item in enumerate(report["topWords"], 1):
             lines.append(f"{i}. {item['word']}（{item['count']}）")
 
     lines.append("\n## 采样来源\n")
     for s in raw_items:
-        note = ""
+        notes = []
+        if s.get("blocked"):
+            notes.append("风控/验证页")
         if s.get("error"):
-            note = f"（失败: {s['error']}）"
+            notes.append(f"失败: {s['error']}")
+        note = f"（{'；'.join(notes)}）" if notes else ""
         lines.append(f"- {s.get('keyword')}: {s.get('url')} {note}")
 
     with open(out_md, "w", encoding="utf-8") as f:
@@ -164,6 +227,13 @@ def main():
 
     print(f"[OK] 报告已生成: {args.out_md}")
     print(f"[OK] 原始结果已保存: {args.out_json}")
+
+    if args.strict and report["usableSourceCount"] < max(1, args.min_usable):
+        print(
+            f"[ERROR] 有效采样源不足（{report['usableSourceCount']} < {args.min_usable}），结果不可信，按 strict 模式返回失败",
+            file=sys.stderr,
+        )
+        sys.exit(2)
 
 
 if __name__ == "__main__":
