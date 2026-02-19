@@ -57,8 +57,14 @@ NOISE_TERMS = {
 
 NOVEL_DOMAIN_TERMS = {
     "小说", "推文", "网文", "言情", "悬疑", "封面", "书荒", "完结", "连载", "剧情",
-    "文案", "素材", "推荐", "开头", "爆款", "女频", "男频", "番茄", "章节", "题材",
+    "女频", "男频", "番茄", "章节", "题材", "甜文", "虐文", "爽文", "推理", "都市", "古风",
 }
+
+NOVEL_NOISE_PATTERNS = [
+    "素材", "素材库", "礼拿", "自取", "留痕", "爆款开头", "开头素材", "怎么变现", "变现",
+    "账号", "入行", "指南", "教程", "可商用", "底图", "高清", "无水印", "兼职", "网名",
+    "博主", "涨粉", "运营", "搬运",
+]
 
 NOISE_MARKERS = [
     "沪ICP备",
@@ -141,6 +147,10 @@ def domain_ok(word: str, domain: str) -> bool:
     return any(t in word for t in NOVEL_DOMAIN_TERMS)
 
 
+def novel_noise(word: str) -> bool:
+    return any(p in word for p in NOVEL_NOISE_PATTERNS)
+
+
 def extract_words(text: str, domain: str = "general"):
     phrases = re.findall(r"[\u4e00-\u9fff]{2,12}", text)
     words = []
@@ -156,6 +166,8 @@ def extract_words(text: str, domain: str = "general"):
         if ph in NOISE_TERMS or is_time_phrase(ph):
             continue
         if not domain_ok(ph, domain):
+            continue
+        if domain == "novel" and novel_noise(ph):
             continue
         words.append(ph)
     return words
@@ -224,7 +236,7 @@ def load_cookie_file(path: str):
     return cookies
 
 
-def extract_related_keywords(text: str, max_n: int = 3):
+def extract_related_keywords(text: str, max_n: int = 3, domain: str = "general"):
     if max_n <= 0:
         return []
     lines = [x.strip() for x in (text or "").splitlines() if x.strip()]
@@ -235,20 +247,23 @@ def extract_related_keywords(text: str, max_n: int = 3):
         for cand in lines[i + 1 : i + 40]:
             if len(out) >= max_n:
                 break
-            # 过滤明显噪声
             if len(cand) < 2 or len(cand) > 16:
                 continue
             if any(ch.isdigit() for ch in cand):
                 continue
-            if cand in STOPWORDS:
+            if cand in STOPWORDS or cand in NOISE_TERMS:
                 continue
             if any(nm in cand for nm in NOISE_MARKERS):
                 continue
             if cand in {"活动", "全部", "图文", "视频", "用户", "筛选", "综合", "最新", "榜单"}:
                 continue
-            # 只保留中英文常见词
             if not re.match(r"^[\u4e00-\u9fffA-Za-z]{2,16}$", cand):
                 continue
+            if domain == "novel":
+                if not domain_ok(cand, domain):
+                    continue
+                if novel_noise(cand):
+                    continue
             if cand not in out:
                 out.append(cand)
         if out:
@@ -256,7 +271,7 @@ def extract_related_keywords(text: str, max_n: int = 3):
     return out[:max_n]
 
 
-async def crawl_keywords(keywords, scrolls=5, headful=False, cookie_file=None, auto_related=0, max_keywords=30):
+async def crawl_keywords(keywords, scrolls=5, headful=False, cookie_file=None, auto_related=0, max_keywords=30, domain="general"):
     try:
         from playwright.async_api import async_playwright
     except Exception as e:
@@ -315,7 +330,7 @@ async def crawl_keywords(keywords, scrolls=5, headful=False, cookie_file=None, a
                 item["text"] = sanitize_text(body)
 
                 if auto_related > 0 and not item["blocked"]:
-                    rel = extract_related_keywords(body, max_n=auto_related)
+                    rel = extract_related_keywords(body, max_n=auto_related, domain=domain)
                     item["related"] = rel
                     for r in rel:
                         if r not in seen and r not in queue and len(seen) + len(queue) < max_keywords:
@@ -388,7 +403,7 @@ def write_outputs(report, raw_items, out_md, out_json):
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
     lines = []
-    lines.append("# 小红书虚拟产品高频词报告\n")
+    lines.append("# 小红书类目高频词报告\n")
     lines.append(f"- 生成时间：{report['generatedAt']}")
     lines.append(f"- 关键词：{', '.join(report['keywords'])}")
     lines.append(f"- 采样源数量：{report['sourceCount']}")
@@ -436,6 +451,7 @@ def main():
             cookie_file=args.cookie_file,
             auto_related=args.auto_related,
             max_keywords=args.max_keywords,
+            domain=args.domain,
         )
     )
     report = build_report(raw_items, max_top=args.max_top, domain=args.domain)
