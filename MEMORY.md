@@ -222,4 +222,5 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ 已支持任务产物浏览器下载（统一产物目录 `/opt/agent-team-console/artifacts` + 下载页）。
 - ✅ 已升级为“任务级上传/下载”：新建任务可上传附件，任务详情页可按任务直接下载 input/output 文件。
 - ✅ 任务列表已支持“删除任务”（含日志与任务产物清理，运行中保护）。
+- ✅ 已新增“小红书虚拟产品高频词”业务模板（任务级产物输出 md/json）。
 - ✅ 代码已同步 GitHub（提交 `df2deff`）。

@@ -98,6 +98,7 @@
               <option data-cmd="cd __PROJECT_DIR__ && python3 manage.py migrate" data-desc="执行数据库迁移">数据库迁移（migrate）</option>
               <option data-cmd="cd __PROJECT_DIR__ && docker compose ps && docker compose logs --tail=80" data-desc="检查容器状态并抓取最近日志">服务巡检（compose 状态+日志）</option>
               <option data-cmd="cd __PROJECT_DIR__ && python3 scripts/daily_report_wrapper.py" data-desc="执行每日简报脚本">日报任务（Python 脚本）</option>
+              <option data-cmd="cd __PROJECT_DIR__ && python3 scripts/xhs_virtual_keywords.py --keywords '虚拟产品,数字产品,PPT模板,简历模板,教程课程,AI提示词,素材包,资料包' --out-md $TASK_OUTPUT_DIR/xhs_virtual_keywords.md --out-json $TASK_OUTPUT_DIR/xhs_virtual_keywords.json" data-desc="抓取小红书虚拟产品类目相关页面文本并统计高频词">小红书虚拟产品高频词（自动分析）</option>
             </select>
           </div>
           <div class="col-md-5">
