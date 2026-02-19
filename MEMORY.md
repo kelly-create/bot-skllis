@@ -215,4 +215,5 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ 在萝卜节点上线浏览器可访问的 Agent Team 控制台：`https://agent.caopi.de`。
 - ✅ 已完成独立 Nginx 站点与 Let’s Encrypt 证书（`agent.caopi.de`）。
 - ✅ 功能覆盖：账号密码登录、任务创建/启动/停止/重置、进度看板、日志查看、并发控制（默认4）。
+- ✅ 已支持页面内动态调整并发（1-16，实时生效）并补全中文提示文案。
 - ✅ 代码已同步 GitHub（提交 `df2deff`）。
