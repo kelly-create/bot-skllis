@@ -209,3 +209,10 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ 汇报规范：必须拿到最终 rc（禁止“still running”提前报成功）。
 - 后续：修复周期 cron 漏触发后，再考虑迁回 `kind=cron`。
 - 🔴 追加（同日）：用户确认 X 账号已冻结后，已紧急停用全部 X 自动任务（含 AT 预排程），先人工解封与通过安全验证，再恢复自动化。
+
+## 2026-02-19 关键交付（Agent Team 控制台）
+
+- ✅ 在萝卜节点上线浏览器可访问的 Agent Team 控制台：`https://agent.caopi.de`。
+- ✅ 已完成独立 Nginx 站点与 Let’s Encrypt 证书（`agent.caopi.de`）。
+- ✅ 功能覆盖：账号密码登录、任务创建/启动/停止/重置、进度看板、日志查看、并发控制（默认4）。
+- ✅ 代码已同步 GitHub（提交 `df2deff`）。
