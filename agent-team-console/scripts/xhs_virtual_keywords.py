@@ -49,6 +49,17 @@ RISK_TERMS = [
     "访问受限",
 ]
 
+NOISE_TERMS = {
+    "大家都在搜", "天前", "小时前", "分钟前", "秒前", "今天", "昨天", "刚刚",
+    "小红薯", "礼拿", "礼貌拿", "礼貌自取", "留痕自取", "留爪", "自取", "拿图",
+    "高级感", "治愈系", "破碎感", "抽象", "无水印", "午安", "晚安", "早安",
+}
+
+NOVEL_DOMAIN_TERMS = {
+    "小说", "推文", "网文", "言情", "悬疑", "封面", "书荒", "完结", "连载", "剧情",
+    "文案", "素材", "推荐", "开头", "爆款", "女频", "男频", "番茄", "章节", "题材",
+}
+
 NOISE_MARKERS = [
     "沪ICP备",
     "营业执照",
@@ -77,6 +88,8 @@ def parse_args():
     p.add_argument("--min-usable", type=int, default=3, help="strict 模式最低有效采样源")
     p.add_argument("--auto-related", type=int, default=0, help="每个关键词自动扩展相关搜索词数量（0=关闭）")
     p.add_argument("--max-keywords", type=int, default=30, help="自动扩展后的最大关键词总数")
+    p.add_argument("--domain", choices=["general", "novel"], default="general", help="业务域过滤：general|novel")
+    p.add_argument("--min-domain-ratio", type=float, default=0.25, help="novel域下TOP词命中率下限（strict时生效）")
     p.add_argument(
         "--cookie-file",
         default=os.path.join(os.getenv("TASK_INPUT_DIR", "."), "xhs_cookies.json"),
@@ -118,8 +131,18 @@ def sanitize_text(text: str) -> str:
     return "\n".join(lines)
 
 
-def extract_words(text: str):
-    phrases = re.findall(r"[\u4e00-\u9fff]{2,10}", text)
+def is_time_phrase(s: str) -> bool:
+    return bool(re.search(r"\d+\s*(天前|小时前|分钟前|秒前)$", s)) or s in {"天前", "小时前", "分钟前", "秒前"}
+
+
+def domain_ok(word: str, domain: str) -> bool:
+    if domain != "novel":
+        return True
+    return any(t in word for t in NOVEL_DOMAIN_TERMS)
+
+
+def extract_words(text: str, domain: str = "general"):
+    phrases = re.findall(r"[\u4e00-\u9fff]{2,12}", text)
     words = []
     for ph in phrases:
         if ph in STOPWORDS:
@@ -129,6 +152,10 @@ def extract_words(text: str):
         if any(rt in ph for rt in RISK_TERMS):
             continue
         if any(nm in ph for nm in NOISE_MARKERS):
+            continue
+        if ph in NOISE_TERMS or is_time_phrase(ph):
+            continue
+        if not domain_ok(ph, domain):
             continue
         words.append(ph)
     return words
@@ -306,7 +333,7 @@ async def crawl_keywords(keywords, scrolls=5, headful=False, cookie_file=None, a
     return results
 
 
-def build_report(raw_items, max_top=80):
+def build_report(raw_items, max_top=80, domain="general"):
     counter = Counter()
     total_chars = 0
     usable_sources = 0
@@ -328,10 +355,17 @@ def build_report(raw_items, max_top=80):
 
         usable_sources += 1
         total_chars += len(txt)
-        for w in extract_words(txt):
+        for w in extract_words(txt, domain=domain):
             counter[w] += 1
 
     top = counter.most_common(max_top)
+    domain_hits = 0
+    for k, _ in top[:20]:
+        if any(t in k for t in NOVEL_DOMAIN_TERMS):
+            domain_hits += 1
+    top_n = max(1, min(20, len(top)))
+    domain_ratio = domain_hits / top_n if top_n else 0.0
+
     return {
         "generatedAt": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
         "keywords": [x.get("keyword") for x in raw_items],
@@ -339,6 +373,8 @@ def build_report(raw_items, max_top=80):
         "usableSourceCount": usable_sources,
         "blockedSourceCount": blocked_sources,
         "totalChars": total_chars,
+        "domain": domain,
+        "domainTop20HitRatio": round(domain_ratio, 4),
         "topWords": [{"word": k, "count": v} for k, v in top],
     }
 
@@ -358,7 +394,8 @@ def write_outputs(report, raw_items, out_md, out_json):
     lines.append(f"- 采样源数量：{report['sourceCount']}")
     lines.append(f"- 有效采样源：{report['usableSourceCount']}")
     lines.append(f"- 风控/拦截源：{report['blockedSourceCount']}")
-    lines.append(f"- 有效文本总长度：{report['totalChars']}\n")
+    lines.append(f"- 有效文本总长度：{report['totalChars']}")
+    lines.append(f"- 领域命中率(top20)：{report.get('domainTop20HitRatio', 0)}\n")
 
     if report["usableSourceCount"] == 0:
         lines.append("## 结果有效性\n")
@@ -401,7 +438,7 @@ def main():
             max_keywords=args.max_keywords,
         )
     )
-    report = build_report(raw_items, max_top=args.max_top)
+    report = build_report(raw_items, max_top=args.max_top, domain=args.domain)
     write_outputs(report, raw_items, args.out_md, args.out_json)
 
     print(f"[OK] 报告已生成: {args.out_md}")
@@ -413,6 +450,15 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
+
+    if args.strict and args.domain == "novel":
+        ratio = float(report.get("domainTop20HitRatio", 0.0))
+        if ratio < float(args.min_domain_ratio):
+            print(
+                f"[ERROR] 领域命中率过低（{ratio} < {args.min_domain_ratio}），结果可能偏离小说类目，按 strict 模式返回失败",
+                file=sys.stderr,
+            )
+            sys.exit(3)
 
 
 if __name__ == "__main__":
