@@ -13,7 +13,7 @@
     <div class="text-white small d-flex align-items-center gap-2">
       <span>并发上限: {{ g.max_concurrent }} ｜ 活跃执行: {{ g.active_workers }} ｜ 排队中: {{ queue_count }}</span>
       <button type="button" id="toggleRefreshBtn" class="btn btn-sm btn-outline-light py-0 px-2" onclick="toggleAutoRefresh()">自动刷新：开</button>
-      <a class="text-white" href="{{ url_for('artifacts_page') }}">产物下载</a>
+      <a class="text-white" href="{{ url_for('artifacts_page') }}">全局产物（高级）</a>
       <a class="text-white" href="{{ url_for('logout') }}">退出</a>
     </div>
   </div>
@@ -53,7 +53,7 @@
   <div class="card mb-3">
     <div class="card-header">新建任务</div>
     <div class="card-body">
-      <form method="post" action="{{ url_for('create_task') }}">
+      <form method="post" action="{{ url_for('create_task') }}" enctype="multipart/form-data">
         <div class="row g-2">
           <div class="col-md-4"><input class="form-control" name="title" placeholder="任务标题（必填）" required /></div>
           <div class="col-md-2">
@@ -120,8 +120,13 @@
             <div class="form-text">
               示例：<code>cd /root/your-project && pytest -q</code> ｜ <code>cd /root/your-project && npm run build</code>。
               若你是新手，建议先使用上面的“业务模板”自动生成命令。
-              <br>如果任务会生成文件，请把产物放到：<code>{{ g.artifact_root }}</code>，然后可在顶部“产物下载”里直接下载。
+              <br>每个任务会有独立目录：<code>{{ g.artifact_root }}/task_任务ID/</code>，可在任务详情页直接下载对应文件。
             </div>
+          </div>
+          <div class="col-12">
+            <label class="form-label mb-1">上传附件（可选）</label>
+            <input type="file" class="form-control" name="attachments" multiple>
+            <div class="form-text">可上传需求文档、配置文件、样例数据。创建任务后会自动归档到该任务的 input 目录。</div>
           </div>
         </div>
         <button class="btn btn-primary mt-2">创建任务</button>
@@ -144,6 +149,7 @@
 
   <div class="card">
     <div class="card-header">任务列表</div>
+    <div class="card-body py-2 small text-muted">点击任务标题进入详情页，可上传该任务附件、下载该任务产物。</div>
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0">
         <thead><tr><th>ID</th><th>标题</th><th>类型</th><th>执行者</th><th>优先级</th><th>状态</th><th>返回码</th><th>更新时间</th><th>操作</th></tr></thead>

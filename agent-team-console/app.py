@@ -9,6 +9,7 @@ from datetime import datetime
 from functools import wraps
 
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from werkzeug.utils import secure_filename
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.getenv("ATC_DB_PATH", os.path.join(BASE_DIR, "data", "tasks.db"))
@@ -24,6 +25,7 @@ os.makedirs(ARTIFACT_ROOT, exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = APP_SECRET
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB
 
 running_processes = {}
 
@@ -99,6 +101,48 @@ def list_artifacts(max_items: int = 300):
             )
     out.sort(key=lambda x: x["ts"], reverse=True)
     return out[:max_items]
+
+
+def task_artifact_dirs(task_id: int):
+    base = os.path.join(ARTIFACT_ROOT, f"task_{task_id}")
+    in_dir = os.path.join(base, "input")
+    out_dir = os.path.join(base, "output")
+    os.makedirs(in_dir, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
+    return base, in_dir, out_dir
+
+
+def list_task_files(task_id: int, kind: str):
+    base, in_dir, out_dir = task_artifact_dirs(task_id)
+    target = in_dir if kind == "input" else out_dir
+    out = []
+    if not os.path.isdir(target):
+        return out
+    for name in os.listdir(target):
+        full = os.path.join(target, name)
+        if not os.path.isfile(full):
+            continue
+        st = os.stat(full)
+        rel = os.path.relpath(full, base)
+        out.append(
+            {
+                "name": name,
+                "rel_path": rel,
+                "size_human": format_size(st.st_size),
+                "mtime": datetime.utcfromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "ts": st.st_mtime,
+            }
+        )
+    out.sort(key=lambda x: x["ts"], reverse=True)
+    return out
+
+
+def safe_join_under(root: str, rel_path: str):
+    safe_full = os.path.realpath(os.path.join(root, rel_path))
+    root_real = os.path.realpath(root)
+    if not safe_full.startswith(root_real + os.sep) and safe_full != root_real:
+        return None
+    return safe_full
 
 
 @contextmanager
@@ -219,6 +263,12 @@ def login_required(fn):
     return wrapper
 
 
+@app.errorhandler(413)
+def payload_too_large(_):
+    flash("上传文件过大（单次请求上限 200MB），请压缩后重试。")
+    return redirect(url_for("dashboard")), 413
+
+
 def run_task(task_id: int):
     task = get_task(task_id)
     if not task:
@@ -227,7 +277,11 @@ def run_task(task_id: int):
 
     with limiter.acquire():
         update_task(task_id, status="running", started_at=now_str(), return_code=None)
+        base_dir, input_dir, output_dir = task_artifact_dirs(task_id)
         append_log(task_id, f"[SYSTEM] 任务启动，当前并发上限={limiter.get_limit()}")
+        append_log(task_id, f"[SYSTEM] 任务产物目录: {base_dir}")
+        append_log(task_id, f"[SYSTEM] 输入附件目录: {input_dir}")
+        append_log(task_id, f"[SYSTEM] 输出产物目录: {output_dir}")
 
         cmd = (task["command"] or "").strip()
         if not cmd:
@@ -254,11 +308,21 @@ def run_task(task_id: int):
 
         try:
             append_log(task_id, f"[SYSTEM] 执行命令: {cmd}")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TASK_ID": str(task_id),
+                    "TASK_ARTIFACT_DIR": base_dir,
+                    "TASK_INPUT_DIR": input_dir,
+                    "TASK_OUTPUT_DIR": output_dir,
+                }
+            )
             proc = subprocess.Popen(
                 cmd,
                 shell=True,
                 cwd=WORKDIR,
                 executable="/bin/bash",
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -372,9 +436,8 @@ def artifacts_page():
 @app.route("/artifacts/download/<path:rel_path>")
 @login_required
 def artifacts_download(rel_path: str):
-    safe_full = os.path.realpath(os.path.join(ARTIFACT_ROOT, rel_path))
-    root_real = os.path.realpath(ARTIFACT_ROOT)
-    if not safe_full.startswith(root_real + os.sep) and safe_full != root_real:
+    safe_full = safe_join_under(ARTIFACT_ROOT, rel_path)
+    if not safe_full:
         abort(400)
     if not os.path.isfile(safe_full):
         abort(404)
@@ -433,7 +496,24 @@ def create_task():
         task_id = cur.lastrowid
 
     append_log(task_id, f"[SYSTEM] 任务创建：{title}")
-    flash(f"任务 #{task_id} 创建成功")
+
+    _, input_dir, _ = task_artifact_dirs(task_id)
+    uploaded = 0
+    for f in request.files.getlist("attachments"):
+        if not f or not f.filename:
+            continue
+        safe_name = secure_filename(f.filename)
+        if not safe_name:
+            continue
+        target = os.path.join(input_dir, safe_name)
+        f.save(target)
+        uploaded += 1
+        append_log(task_id, f"[SYSTEM] 已上传附件: {safe_name}")
+
+    if uploaded > 0:
+        flash(f"任务 #{task_id} 创建成功，已上传 {uploaded} 个附件")
+    else:
+        flash(f"任务 #{task_id} 创建成功")
     return redirect(url_for("dashboard"))
 
 
@@ -485,6 +565,49 @@ def stop_task(task_id: int):
     return redirect(url_for("dashboard"))
 
 
+@app.post("/tasks/<int:task_id>/upload")
+@login_required
+def task_upload(task_id: int):
+    task = get_task(task_id)
+    if not task:
+        flash("任务不存在")
+        return redirect(url_for("dashboard"))
+
+    _, input_dir, _ = task_artifact_dirs(task_id)
+    uploaded = 0
+    for f in request.files.getlist("attachments"):
+        if not f or not f.filename:
+            continue
+        safe_name = secure_filename(f.filename)
+        if not safe_name:
+            continue
+        target = os.path.join(input_dir, safe_name)
+        f.save(target)
+        uploaded += 1
+        append_log(task_id, f"[SYSTEM] 已追加上传附件: {safe_name}")
+
+    if uploaded == 0:
+        flash("未检测到可上传文件")
+    else:
+        flash(f"任务 #{task_id} 附件上传完成：{uploaded} 个")
+    return redirect(url_for("task_detail", task_id=task_id))
+
+
+@app.route("/tasks/<int:task_id>/download/<path:rel_path>")
+@login_required
+def task_artifact_download(task_id: int, rel_path: str):
+    task = get_task(task_id)
+    if not task:
+        abort(404)
+    base, _, _ = task_artifact_dirs(task_id)
+    safe_full = safe_join_under(base, rel_path)
+    if not safe_full:
+        abort(400)
+    if not os.path.isfile(safe_full):
+        abort(404)
+    return send_from_directory(base, rel_path, as_attachment=True)
+
+
 @app.route("/tasks/<int:task_id>")
 @login_required
 def task_detail(task_id: int):
@@ -497,7 +620,20 @@ def task_detail(task_id: int):
             "SELECT ts, line FROM task_logs WHERE task_id=? ORDER BY id ASC", (task_id,)
         ).fetchall()
 
-    return render_template("task_detail.html", task=task, logs=logs)
+    base, input_dir, output_dir = task_artifact_dirs(task_id)
+    input_files = list_task_files(task_id, "input")
+    output_files = list_task_files(task_id, "output")
+
+    return render_template(
+        "task_detail.html",
+        task=task,
+        logs=logs,
+        base_dir=base,
+        input_dir=input_dir,
+        output_dir=output_dir,
+        input_files=input_files,
+        output_files=output_files,
+    )
 
 
 @app.route("/api/tasks")

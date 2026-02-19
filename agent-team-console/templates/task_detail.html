@@ -5,23 +5,128 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>任务 #{{ task.id }}</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-  <meta http-equiv="refresh" content="4">
 </head>
 <body class="bg-light">
 <div class="container py-3">
-  <a href="{{ url_for('dashboard') }}">← 返回任务面板</a>
+  <div class="d-flex justify-content-between align-items-center">
+    <a href="{{ url_for('dashboard') }}">← 返回任务面板</a>
+    <button type="button" id="toggleRefreshBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleAutoRefresh()">自动刷新：开</button>
+  </div>
+
   <h4 class="mt-2">#{{ task.id }} {{ task.title }}</h4>
   <div class="small text-muted mb-2">
     状态: {{ task.status }} ｜ 优先级: {{ task.priority }} ｜ 执行者: {{ task.assignee }} ｜ 返回码: {{ task.return_code if task.return_code is not none else '-' }}
   </div>
-  <div class="alert alert-secondary py-2 small">日志每 4 秒自动刷新。若日志长时间不变，可返回面板检查是否处于排队状态或已失败。</div>
-  <div class="card">
-    <div class="card-header">执行日志（自动刷新）</div>
-    <div class="card-body" style="background:#111;color:#ddd;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space:pre-wrap; max-height:70vh; overflow:auto;">
-{% for l in logs %}[{{ l.ts }}] {{ l.line }}
-{% endfor %}
+
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <div class="alert alert-info py-2">{{ messages[0] }}</div>
+    {% endif %}
+  {% endwith %}
+
+  <div class="alert alert-secondary py-2 small">
+    每个任务有独立目录：<code>{{ base_dir }}</code><br>
+    输入附件目录：<code>{{ input_dir }}</code> ｜ 输出产物目录：<code>{{ output_dir }}</code><br>
+    任务命令中可使用环境变量：<code>$TASK_INPUT_DIR</code>、<code>$TASK_OUTPUT_DIR</code>、<code>$TASK_ARTIFACT_DIR</code>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header">输入附件（可下载）</div>
+        <div class="card-body small">
+          <form method="post" action="{{ url_for('task_upload', task_id=task.id) }}" enctype="multipart/form-data" class="mb-2">
+            <div class="input-group input-group-sm">
+              <input type="file" class="form-control" name="attachments" multiple required>
+              <button class="btn btn-outline-primary">上传到此任务</button>
+            </div>
+          </form>
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead><tr><th>文件</th><th>大小</th><th>时间</th><th></th></tr></thead>
+              <tbody>
+              {% if input_files|length == 0 %}
+                <tr><td colspan="4" class="text-muted">暂无附件</td></tr>
+              {% else %}
+                {% for f in input_files %}
+                  <tr>
+                    <td>{{ f.name }}</td>
+                    <td>{{ f.size_human }}</td>
+                    <td>{{ f.mtime }}</td>
+                    <td><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('task_artifact_download', task_id=task.id, rel_path=f.rel_path) }}">下载</a></td>
+                  </tr>
+                {% endfor %}
+              {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header">输出产物（可下载）</div>
+        <div class="card-body small">
+          <div class="text-muted mb-2">请在任务命令里把结果文件写入 <code>$TASK_OUTPUT_DIR</code>。</div>
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead><tr><th>文件</th><th>大小</th><th>时间</th><th></th></tr></thead>
+              <tbody>
+              {% if output_files|length == 0 %}
+                <tr><td colspan="4" class="text-muted">暂无产物</td></tr>
+              {% else %}
+                {% for f in output_files %}
+                  <tr>
+                    <td>{{ f.name }}</td>
+                    <td>{{ f.size_human }}</td>
+                    <td>{{ f.mtime }}</td>
+                    <td><a class="btn btn-sm btn-primary" href="{{ url_for('task_artifact_download', task_id=task.id, rel_path=f.rel_path) }}">下载</a></td>
+                  </tr>
+                {% endfor %}
+              {% endif %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
+
+  <div class="card">
+    <div class="card-header">执行日志（空闲时自动刷新）</div>
+    <div id="logBox" class="card-body" style="background:#111;color:#ddd;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; white-space:pre-wrap; max-height:70vh; overflow:auto;">{% for l in logs %}[{{ l.ts }}] {{ l.line }}
+{% endfor %}</div>
+  </div>
 </div>
+
+<script>
+let autoRefreshEnabled = true;
+let formDirty = false;
+
+function setDirty() { formDirty = true; }
+
+function toggleAutoRefresh() {
+  autoRefreshEnabled = !autoRefreshEnabled;
+  const btn = document.getElementById('toggleRefreshBtn');
+  if (btn) btn.textContent = autoRefreshEnabled ? '自动刷新：开' : '自动刷新：关';
+}
+
+(function initGuard() {
+  const fields = document.querySelectorAll('input, select, textarea');
+  fields.forEach((el) => {
+    el.addEventListener('input', setDirty);
+    el.addEventListener('change', setDirty);
+  });
+
+  setInterval(() => {
+    if (!autoRefreshEnabled) return;
+    if (formDirty) return;
+    const active = document.activeElement;
+    if (active && active.closest && active.closest('form')) return;
+    window.location.reload();
+  }, 4000);
+})();
+</script>
 </body>
 </html>
