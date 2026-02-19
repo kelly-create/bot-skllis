@@ -371,6 +371,7 @@ def _attach_globals():
     g.max_concurrent = limiter.get_limit()
     g.active_workers = limiter.get_running()
     g.artifact_root = ARTIFACT_ROOT
+    g.workdir = WORKDIR
 
 
 @app.route("/healthz")

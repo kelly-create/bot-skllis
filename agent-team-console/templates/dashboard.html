@@ -103,7 +103,7 @@
           </div>
           <div class="col-md-5">
             <label class="form-label mb-1">项目路径（模板变量）</label>
-            <input id="project_dir" class="form-control form-control-sm" value="/root/.openclaw/workspace" placeholder="例如 /root/your-project" />
+            <input id="project_dir" class="form-control form-control-sm" value="{{ g.workdir }}" placeholder="例如 /root/your-project" />
           </div>
           <div class="col-md-3 d-grid">
             <label class="form-label mb-1">快速操作</label>
@@ -213,7 +213,7 @@ function fillTemplateToCommand() {
     alert('请先选择一个业务模板');
     return;
   }
-  const projectDir = (pathInput?.value || '/root/.openclaw/workspace').trim();
+  const projectDir = (pathInput?.value || '{{ g.workdir }}').trim();
   cmdInput.value = raw.split('__PROJECT_DIR__').join(projectDir);
   if (descInput && !descInput.value && desc) {
     descInput.value = desc;
