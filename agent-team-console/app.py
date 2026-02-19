@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from functools import wraps
 
-from flask import Flask, flash, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.getenv("ATC_DB_PATH", os.path.join(BASE_DIR, "data", "tasks.db"))
@@ -17,8 +17,10 @@ ADMIN_PASSWORD = os.getenv("ATC_ADMIN_PASSWORD", "k5348988")
 APP_SECRET = os.getenv("ATC_APP_SECRET", "change-me-now")
 WORKDIR = os.getenv("ATC_WORKDIR", BASE_DIR)
 DEFAULT_MAX_CONCURRENT = int(os.getenv("ATC_MAX_CONCURRENT", "4"))
+ARTIFACT_ROOT = os.getenv("ATC_ARTIFACT_ROOT", os.path.join(BASE_DIR, "artifacts"))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+os.makedirs(ARTIFACT_ROOT, exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = APP_SECRET
@@ -65,6 +67,38 @@ limiter = ConcurrencyLimiter(DEFAULT_MAX_CONCURRENT)
 
 def now_str():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def format_size(num_bytes: int) -> str:
+    size = float(num_bytes)
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024 or unit == "TB":
+            return f"{size:.1f}{unit}" if unit != "B" else f"{int(size)}B"
+        size /= 1024
+
+
+def list_artifacts(max_items: int = 300):
+    out = []
+    for root, _, files in os.walk(ARTIFACT_ROOT):
+        for name in files:
+            full = os.path.join(root, name)
+            rel = os.path.relpath(full, ARTIFACT_ROOT)
+            try:
+                st = os.stat(full)
+            except FileNotFoundError:
+                continue
+            out.append(
+                {
+                    "name": name,
+                    "rel_path": rel,
+                    "size": st.st_size,
+                    "size_human": format_size(st.st_size),
+                    "mtime": datetime.utcfromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "ts": st.st_mtime,
+                }
+            )
+    out.sort(key=lambda x: x["ts"], reverse=True)
+    return out[:max_items]
 
 
 @contextmanager
@@ -271,6 +305,7 @@ def start_task(task_id: int):
 def _attach_globals():
     g.max_concurrent = limiter.get_limit()
     g.active_workers = limiter.get_running()
+    g.artifact_root = ARTIFACT_ROOT
 
 
 @app.route("/healthz")
@@ -325,6 +360,32 @@ def dashboard():
         running_count=len(running_processes),
         queue_count=queue_count,
     )
+
+
+@app.route("/artifacts")
+@login_required
+def artifacts_page():
+    files = list_artifacts()
+    return render_template("artifacts.html", files=files, artifact_root=ARTIFACT_ROOT)
+
+
+@app.route("/artifacts/download/<path:rel_path>")
+@login_required
+def artifacts_download(rel_path: str):
+    safe_full = os.path.realpath(os.path.join(ARTIFACT_ROOT, rel_path))
+    root_real = os.path.realpath(ARTIFACT_ROOT)
+    if not safe_full.startswith(root_real + os.sep) and safe_full != root_real:
+        abort(400)
+    if not os.path.isfile(safe_full):
+        abort(404)
+    return send_from_directory(ARTIFACT_ROOT, rel_path, as_attachment=True)
+
+
+@app.post("/artifacts/clear")
+@login_required
+def artifacts_clear_note():
+    flash("当前版本为安全起见未开放网页删除文件；请在服务器上手动清理产物目录。")
+    return redirect(url_for("artifacts_page"))
 
 
 @app.post("/settings/concurrency")

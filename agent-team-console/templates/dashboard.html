@@ -13,6 +13,7 @@
     <div class="text-white small d-flex align-items-center gap-2">
       <span>并发上限: {{ g.max_concurrent }} ｜ 活跃执行: {{ g.active_workers }} ｜ 排队中: {{ queue_count }}</span>
       <button type="button" id="toggleRefreshBtn" class="btn btn-sm btn-outline-light py-0 px-2" onclick="toggleAutoRefresh()">自动刷新：开</button>
+      <a class="text-white" href="{{ url_for('artifacts_page') }}">产物下载</a>
       <a class="text-white" href="{{ url_for('logout') }}">退出</a>
     </div>
   </div>
@@ -119,6 +120,7 @@
             <div class="form-text">
               示例：<code>cd /root/your-project && pytest -q</code> ｜ <code>cd /root/your-project && npm run build</code>。
               若你是新手，建议先使用上面的“业务模板”自动生成命令。
+              <br>如果任务会生成文件，请把产物放到：<code>{{ g.artifact_root }}</code>，然后可在顶部“产物下载”里直接下载。
             </div>
           </div>
         </div>
