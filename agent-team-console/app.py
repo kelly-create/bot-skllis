@@ -725,7 +725,8 @@ def call_role_llm(role, messages):
     if not model:
         raise RuntimeError(f"角色 {role['code']} 未配置模型")
 
-    url = api_base.rstrip("/") + "/v1/chat/completions"
+    base = api_base.rstrip("/")
+    url = (base + "/chat/completions") if base.endswith("/v1") else (base + "/v1/chat/completions")
     payload = {
         "model": model,
         "messages": messages,
