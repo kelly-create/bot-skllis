@@ -5,24 +5,47 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Agent Team 控制台 - 登录</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body {
+      min-height: 100vh;
+      background: radial-gradient(1200px 500px at 10% -5%, #dbeafe 0%, transparent 60%),
+                  radial-gradient(1000px 500px at 90% 105%, #ede9fe 0%, transparent 65%),
+                  #f3f6fc;
+    }
+    .login-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+    .login-card {
+      width: 100%;
+      max-width: 430px;
+      border-radius: 18px;
+      border: 1px solid #e7ebf4;
+      box-shadow: 0 15px 45px rgba(30,41,59,.09);
+      background: #fff;
+    }
+    .brand-badge { font-size: .78rem; border-radius: 999px; padding: .2rem .6rem; background: #eef2ff; color: #3730a3; }
+  </style>
 </head>
-<body class="bg-light">
-  <div class="container" style="max-width:420px;margin-top:10vh;">
-    <div class="card shadow-sm">
-      <div class="card-body p-4">
-        <h4 class="mb-2">Agent Team 控制台</h4>
-        <div class="text-muted small mb-3">登录后可创建任务、调整并发、查看实时日志。</div>
+<body>
+  <div class="login-wrap">
+    <div class="card login-card">
+      <div class="card-body p-4 p-lg-5">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h4 class="mb-0">Agent Team 控制台</h4>
+          <span class="brand-badge">安全登录</span>
+        </div>
+        <div class="text-muted small mb-4">登录后可创建任务、管理角色/工作流、查看交付与日志。</div>
+
         {% with messages = get_flashed_messages() %}
           {% if messages %}
             <div class="alert alert-warning py-2">{{ messages[0] }}</div>
           {% endif %}
         {% endwith %}
-        <form method="post">
+
+        <form method="post" autocomplete="on">
           <div class="mb-3">
             <label class="form-label">账号</label>
             <input name="username" class="form-control" required />
           </div>
-          <div class="mb-3">
+          <div class="mb-4">
             <label class="form-label">密码</label>
             <input type="password" name="password" class="form-control" required />
           </div>
