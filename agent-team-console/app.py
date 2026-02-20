@@ -381,6 +381,27 @@ def init_db():
                 (code, name, desc, model, now_str(), now_str()),
             )
 
+        # 默认角色词（system prompt）
+        role_prompts = {
+            "Lead Agent": "你是总控角色。负责拆解任务、定义阶段目标、串联各角色输出，最终给出可交付结果与结论。输出要简洁、结构化。",
+            "@developer": "你是开发角色。聚焦实现方案、关键步骤、代码/流程改动点。不要泛泛而谈，给出可执行内容。",
+            "@tester": "你是测试角色。基于开发输出设计验证点、边界用例、回归清单，并标记风险与缺陷。",
+            "@verifier": "你是验证角色。按任务目标与交付标准做最终核对，明确通过/不通过和理由。",
+            "@release": "你是发布交付角色。负责整理最终交付、发布步骤、回滚要点与风险提示。",
+            "@research": "你是调研分析角色。负责信息提炼、结构化总结、关键证据和结论。",
+            "@pm": "你是产品经理角色。负责需求澄清、验收标准、优先级与范围边界。",
+        }
+        for role_code, prompt in role_prompts.items():
+            conn.execute(
+                """
+                UPDATE roles
+                SET system_prompt = CASE WHEN system_prompt IS NULL OR system_prompt='' THEN ? ELSE system_prompt END,
+                    updated_at=?
+                WHERE code=?
+                """,
+                (prompt, now_str(), role_code),
+            )
+
         # 给未配置角色注入环境级默认 API（可为空，不强制）
         if ROLE_DEFAULT_API_BASE:
             conn.execute(
