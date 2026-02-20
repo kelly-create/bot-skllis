@@ -27,6 +27,7 @@ ARTIFACT_ROOT = os.getenv("ATC_ARTIFACT_ROOT", os.path.join(BASE_DIR, "artifacts
 ROLE_DEFAULT_API_BASE = os.getenv("ATC_ROLE_DEFAULT_API_BASE", "").strip()
 ROLE_DEFAULT_API_KEY = os.getenv("ATC_ROLE_DEFAULT_API_KEY", "").strip()
 ROLE_DEFAULT_TIMEOUT = int(os.getenv("ATC_ROLE_TIMEOUT_SECONDS", "180"))
+ROLE_MAX_REWORK_ROUNDS = max(0, min(5, int(os.getenv("ATC_MAX_REWORK_ROUNDS", "2"))))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 os.makedirs(ARTIFACT_ROOT, exist_ok=True)
@@ -766,6 +767,71 @@ def call_role_llm(role, messages):
     return text
 
 
+def is_verifier_stage(stage: str, role_code: str) -> bool:
+    s = (stage or "")
+    r = (role_code or "")
+    return r == "@verifier" or any(k in s for k in ["验证", "复核", "验收", "review"])
+
+
+def parse_verifier_feedback(text: str) -> dict:
+    raw = (text or "").strip()
+    out = {
+        "decision": "UNKNOWN",
+        "reason": "",
+        "issues": [],
+        "send_back_role": "",
+        "rework_instructions": "",
+    }
+    if not raw:
+        return out
+
+    # 优先解析 JSON
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if m:
+        try:
+            data = json.loads(m.group(0))
+            dec = str(data.get("decision", "")).strip().upper()
+            if dec in ("PASS", "FAIL"):
+                out["decision"] = dec
+            out["reason"] = str(data.get("reason", "")).strip()
+            issues = data.get("issues") or []
+            if isinstance(issues, list):
+                out["issues"] = [str(x).strip() for x in issues if str(x).strip()]
+            out["send_back_role"] = str(data.get("send_back_role", "")).strip()
+            out["rework_instructions"] = str(data.get("rework_instructions", "")).strip()
+            return out
+        except Exception:
+            pass
+
+    upper = raw.upper()
+    if "FAIL" in upper or "不通过" in raw or "打回" in raw:
+        out["decision"] = "FAIL"
+    elif "PASS" in upper or "通过" in raw:
+        out["decision"] = "PASS"
+
+    role_hit = re.search(r"(@[a-zA-Z0-9_\-]+)", raw)
+    if role_hit:
+        out["send_back_role"] = role_hit.group(1)
+
+    lines = [ln.strip("- •\t ") for ln in raw.splitlines() if ln.strip()]
+    if lines:
+        out["reason"] = lines[0][:300]
+        out["issues"] = lines[1:6]
+        out["rework_instructions"] = "；".join(lines[1:4])[:800]
+    return out
+
+
+def find_stage_index_by_role(stages: list, stage_roles: dict, role_code: str, before_idx: int, fallback_idx: int = 0) -> int:
+    rc = (role_code or "").strip()
+    if not rc:
+        return fallback_idx
+    for i in range(max(0, before_idx - 1), -1, -1):
+        st = stages[i]
+        if (stage_roles.get(st) or "").strip() == rc:
+            return i
+    return fallback_idx
+
+
 def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
     stages = parse_stages(wf["stages_json"])
     stage_roles = parse_stage_roles(wf["stage_roles_json"])
@@ -774,16 +840,30 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
 
     sections = parse_task_sections(task["description"] or "")
     previous_output = ""
+    handoff_note = ""
+    rework_round = 0
+    stage_idx = 0
+    execution_no = 0
+    max_rework_rounds = ROLE_MAX_REWORK_ROUNDS
+    max_iterations = len(stages) * (max_rework_rounds + 2) + 8
+    iterations = 0
+
     audit = {
         "taskId": task_id,
         "workflow": wf["code"],
+        "maxReworkRounds": max_rework_rounds,
+        "reworkRoundsUsed": 0,
         "stages": [],
         "startedAt": now_str(),
     }
 
-    for idx, stage in enumerate(stages, 1):
-        ensure_not_stopped(task_id)
+    while stage_idx < len(stages):
+        iterations += 1
+        if iterations > max_iterations:
+            raise RuntimeError(f"超过最大迭代限制（{max_iterations}），已自动终止避免循环")
 
+        ensure_not_stopped(task_id)
+        stage = stages[stage_idx]
         role_code = stage_roles.get(stage) or (wf["default_assignee"] or "") or (task["assignee"] or "Lead Agent")
         role = get_role_by_code(role_code)
         if not role:
@@ -791,12 +871,26 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
         if int(role["enabled"] or 0) != 1:
             raise RuntimeError(f"阶段 {stage} 角色未启用: {role_code}")
 
-        append_log(task_id, f"[Lead Agent] 阶段{idx}/{len(stages)}：{stage} -> {role_code}")
+        append_log(task_id, f"[Lead Agent] 阶段{stage_idx+1}/{len(stages)}：{stage} -> {role_code}（返工轮次={rework_round}）")
 
-        history = load_role_messages(task_id, role_code, limit=8)
+        history = load_role_messages(task_id, role_code, limit=10)
         sys_prompt = (role["system_prompt"] or "").strip()
         if not sys_prompt:
             sys_prompt = f"你是{role['name']}（{role['code']}），职责：{role['description'] or '完成被分配阶段并输出可执行结果'}。"
+
+        verifier_mode = is_verifier_stage(stage, role_code)
+        if verifier_mode:
+            stage_instruction = (
+                "你只负责当前复核阶段，不负责开发实现。请严格依据任务要求判定是否通过。"
+                "必须返回 JSON："
+                '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"@developer 或 @tester","rework_instructions":"..."}'
+                "。如果通过，issues可为空，send_back_role可空。"
+            )
+        else:
+            stage_instruction = (
+                "你只负责当前阶段，不要替下一阶段做决定。"
+                "输出本阶段可直接交接给下阶段的结果（中文、结构化、可执行）。"
+            )
 
         user_prompt = (
             f"你当前负责阶段：{stage}\n"
@@ -805,40 +899,81 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
             f"期望交付：{sections.get('delivery') or ''}\n"
             f"补充说明：{sections.get('extra') or ''}\n"
             f"上一个阶段输出（若为空可忽略）：\n{previous_output}\n\n"
-            "请直接输出本阶段可交付内容（中文，结构化，避免空话）。"
+            f"返工/交接说明（若为空可忽略）：\n{handoff_note}\n\n"
+            f"阶段规则：{stage_instruction}"
         )
 
         messages = [{"role": "system", "content": sys_prompt}]
         for h in history:
             turn = (h["turn"] or "").strip().lower()
-            if turn not in ("user", "assistant", "system"):
-                continue
-            messages.append({"role": turn, "content": h["content"] or ""})
+            if turn in ("user", "assistant", "system"):
+                messages.append({"role": turn, "content": h["content"] or ""})
         messages.append({"role": "user", "content": user_prompt})
 
         save_role_message(task_id, role_code, stage, "user", user_prompt)
         output = call_role_llm(role, messages)
         save_role_message(task_id, role_code, stage, "assistant", output)
-        previous_output = output
 
-        stage_file = os.path.join(output_dir, f"阶段{idx}_{stage}_{role_code.replace('@', 'at_').replace(' ', '_')}.md")
+        execution_no += 1
+        stage_file = os.path.join(
+            output_dir,
+            f"步骤{execution_no}_阶段{stage_idx+1}_{stage}_{role_code.replace('@', 'at_').replace(' ', '_')}.md",
+        )
         with open(stage_file, "w", encoding="utf-8") as f:
-            f.write(f"# 阶段{idx}：{stage}\n\n")
-            f.write(f"角色：{role['name']}（{role['code']}）\n\n")
+            f.write(f"# 步骤{execution_no}｜阶段{stage_idx+1}：{stage}\n\n")
+            f.write(f"角色：{role['name']}（{role['code']}）\n")
+            f.write(f"返工轮次：{rework_round}\n\n")
             f.write(output + "\n")
 
-        audit["stages"].append(
-            {
-                "index": idx,
-                "stage": stage,
-                "role": role_code,
-                "model": role["default_model"],
-                "outputFile": os.path.basename(stage_file),
-                "outputChars": len(output),
-                "finishedAt": now_str(),
-            }
-        )
+        stage_audit = {
+            "executionNo": execution_no,
+            "index": stage_idx + 1,
+            "stage": stage,
+            "role": role_code,
+            "model": role["default_model"],
+            "reworkRound": rework_round,
+            "outputFile": os.path.basename(stage_file),
+            "outputChars": len(output),
+            "finishedAt": now_str(),
+        }
+
+        if verifier_mode:
+            decision = parse_verifier_feedback(output)
+            stage_audit["reviewDecision"] = decision
+            dec = decision.get("decision", "UNKNOWN")
+            append_log(task_id, f"[{role_code}] 复核结论：{dec} | reason={decision.get('reason','')[:120]}")
+
+            if dec != "PASS":
+                if rework_round >= max_rework_rounds:
+                    stage_audit["terminatedByMaxRework"] = True
+                    audit["stages"].append(stage_audit)
+                    audit["reworkRoundsUsed"] = rework_round
+                    raise RuntimeError(f"复核未通过，已达最大返工轮次 {max_rework_rounds}，任务终止")
+
+                target_role = (decision.get("send_back_role") or "").strip()
+                target_idx = find_stage_index_by_role(stages, stage_roles, target_role, stage_idx, fallback_idx=max(0, stage_idx - 1))
+                rework_round += 1
+                audit["reworkRoundsUsed"] = rework_round
+                handoff_note = (
+                    f"复核不通过（第{rework_round}轮返工）。"
+                    f"原因：{decision.get('reason','')}。"
+                    f"问题：{'；'.join(decision.get('issues') or [])}。"
+                    f"修改要求：{decision.get('rework_instructions','请根据复核意见修改后提交。')}"
+                )
+                append_log(
+                    task_id,
+                    f"[Lead Agent] 复核未通过，打回到阶段{target_idx+1}（{stages[target_idx]}），返工轮次={rework_round}/{max_rework_rounds}",
+                )
+                previous_output = output
+                audit["stages"].append(stage_audit)
+                stage_idx = target_idx
+                continue
+
+        previous_output = output
+        handoff_note = ""
+        audit["stages"].append(stage_audit)
         append_log(task_id, f"[{role_code}] 阶段完成，输出长度={len(output)}")
+        stage_idx += 1
 
     final_file = os.path.join(output_dir, "多Agent_最终交付.md")
     with open(final_file, "w", encoding="utf-8") as f:
