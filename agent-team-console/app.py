@@ -142,14 +142,12 @@ def list_task_files(task_id: int, kind: str):
 
 def infer_business_phase(task) -> str:
     status = (task["status"] or "").strip().lower()
-    if status == "pending":
-        return "待理解"
+    if status in ("pending", "failed"):
+        return "待处理"
     if status == "running":
         return "执行中"
     if status == "done":
-        return "待你确认"
-    if status == "failed":
-        return "需返工"
+        return "待确认"
     return "其他"
 
 
@@ -647,7 +645,7 @@ def dashboard():
             "failed": conn.execute("SELECT COUNT(*) c FROM tasks WHERE status='failed'").fetchone()["c"],
         }
 
-    phase_order = ["待理解", "执行中", "待你确认", "需返工"]
+    phase_order = ["待处理", "执行中", "待确认"]
     tasks_by_phase = {k: [] for k in phase_order}
     for t in tasks:
         phase = infer_business_phase(t)
