@@ -8,7 +8,7 @@ import threading
 import time
 import shutil
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 
 from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
@@ -74,6 +74,32 @@ def now_str():
     return datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def to_beijing_time(ts_text: str) -> str:
+    raw = (ts_text or "").strip()
+    if not raw:
+        return "-"
+    try:
+        if raw.endswith(" UTC"):
+            dt = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S UTC")
+        else:
+            dt = datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+        dt_bj = dt + timedelta(hours=8)
+        return dt_bj.strftime("%Y-%m-%d %H:%M:%S 北京时间")
+    except Exception:
+        return raw
+
+
+def epoch_to_beijing(ts_epoch: float) -> str:
+    try:
+        dt_bj = datetime.utcfromtimestamp(ts_epoch) + timedelta(hours=8)
+        return dt_bj.strftime("%Y-%m-%d %H:%M:%S 北京时间")
+    except Exception:
+        return "-"
+
+
+app.jinja_env.filters["bjt"] = to_beijing_time
+
+
 def format_size(num_bytes: int) -> str:
     size = float(num_bytes)
     for unit in ["B", "KB", "MB", "GB", "TB"]:
@@ -98,7 +124,7 @@ def list_artifacts(max_items: int = 300):
                     "rel_path": rel,
                     "size": st.st_size,
                     "size_human": format_size(st.st_size),
-                    "mtime": datetime.utcfromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                    "mtime": epoch_to_beijing(st.st_mtime),
                     "ts": st.st_mtime,
                 }
             )
@@ -132,7 +158,7 @@ def list_task_files(task_id: int, kind: str):
                 "name": name,
                 "rel_path": rel,
                 "size_human": format_size(st.st_size),
-                "mtime": datetime.utcfromtimestamp(st.st_mtime).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                "mtime": epoch_to_beijing(st.st_mtime),
                 "ts": st.st_mtime,
             }
         )
