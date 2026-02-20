@@ -139,6 +139,80 @@ def list_task_files(task_id: int, kind: str):
     return out
 
 
+def infer_business_phase(task) -> str:
+    status = (task["status"] or "").strip().lower()
+    if status == "pending":
+        return "待理解"
+    if status == "running":
+        return "执行中"
+    if status == "done":
+        return "待你确认"
+    if status == "failed":
+        return "需返工"
+    return "其他"
+
+
+def classify_output_files(output_files):
+    packs, reports, audits, others = [], [], [], []
+    for f in output_files:
+        name = (f.get("name") or "").lower()
+        is_pack = name.endswith(".zip") or name.endswith(".7z") or name.endswith(".tar.gz") or name.endswith(".tgz")
+        is_audit = ("audit" in name) or ("审计" in name) or name.endswith(".log")
+        is_report = name.endswith(".md") or name.endswith(".json") or name.endswith(".txt") or name.endswith(".csv") or name.endswith(".pdf")
+
+        if is_pack:
+            packs.append(f)
+        elif is_audit:
+            audits.append(f)
+        elif is_report:
+            reports.append(f)
+        else:
+            others.append(f)
+    return {"packs": packs, "reports": reports, "audits": audits, "others": others}
+
+
+def build_delivery_overview(task, output_files, logs):
+    status = (task["status"] or "").strip().lower()
+    rc = task["return_code"]
+    if status == "done" and (rc in (0, "0", None) or rc == 0):
+        headline = "✅ 任务已完成，可直接查看并下载交付物"
+        next_action = "优先下载“交付压缩包”，确认结果后可归档任务。"
+        progress = 100
+    elif status == "running":
+        headline = "⏳ 任务执行中，正在持续产出"
+        next_action = "可先查看实时日志，等待进入“待你确认”。"
+        progress = 60
+    elif status == "failed":
+        headline = "❌ 任务执行失败，需要返工"
+        next_action = "查看失败日志并重置任务，必要时补充附件或说明。"
+        progress = 100
+    else:
+        headline = "📝 任务待执行"
+        next_action = "确认任务描述与附件后，点击“启动”。"
+        progress = 12
+
+    latest_line = ""
+    for row in reversed(logs):
+        line = (row["line"] or "").strip()
+        if not line:
+            continue
+        latest_line = line
+        if not line.startswith("[SYSTEM]"):
+            break
+
+    groups = classify_output_files(output_files)
+    primary_pack = groups["packs"][0] if groups["packs"] else None
+
+    return {
+        "headline": headline,
+        "next_action": next_action,
+        "progress": progress,
+        "latest_line": latest_line,
+        "groups": groups,
+        "primary_pack": primary_pack,
+    }
+
+
 def safe_join_under(root: str, rel_path: str):
     safe_full = os.path.realpath(os.path.join(root, rel_path))
     root_real = os.path.realpath(root)
@@ -419,11 +493,19 @@ def dashboard():
             "failed": conn.execute("SELECT COUNT(*) c FROM tasks WHERE status='failed'").fetchone()["c"],
         }
 
+    phase_order = ["待理解", "执行中", "待你确认", "需返工"]
+    tasks_by_phase = {k: [] for k in phase_order}
+    for t in tasks:
+        phase = infer_business_phase(t)
+        tasks_by_phase.setdefault(phase, []).append(t)
+
     queue_count = max(0, len(running_processes) - limiter.get_running())
     return render_template(
         "dashboard.html",
         tasks=tasks,
         stats=stats,
+        tasks_by_phase=tasks_by_phase,
+        phase_order=phase_order,
         running_count=len(running_processes),
         queue_count=queue_count,
     )
@@ -733,11 +815,13 @@ def task_detail(task_id: int):
     base, input_dir, output_dir = task_artifact_dirs(task_id)
     input_files = list_task_files(task_id, "input")
     output_files = list_task_files(task_id, "output")
+    delivery = build_delivery_overview(task, output_files, logs)
 
     return render_template(
         "task_detail.html",
         task=task,
         logs=logs,
+        delivery=delivery,
         base_dir=base,
         input_dir=input_dir,
         output_dir=output_dir,

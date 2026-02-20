@@ -155,8 +155,42 @@
     </div>
   </div>
 
-  <div class="card">
-    <div class="card-header">任务列表</div>
+  <div class="card mb-3">
+    <div class="card-header">业务看板（更友好）</div>
+    <div class="card-body small text-muted">按业务阶段查看任务流转：待理解 → 执行中 → 待你确认 → 需返工。</div>
+    <div class="row g-2 px-2 pb-2">
+      {% for phase in phase_order %}
+      <div class="col-md-3">
+        <div class="border rounded bg-white h-100">
+          <div class="px-2 py-2 border-bottom d-flex justify-content-between align-items-center">
+            <b>{{ phase }}</b>
+            <span class="badge bg-secondary">{{ tasks_by_phase.get(phase, [])|length }}</span>
+          </div>
+          <div class="p-2" style="max-height: 420px; overflow:auto;">
+            {% if tasks_by_phase.get(phase, [])|length == 0 %}
+              <div class="text-muted">暂无</div>
+            {% else %}
+              {% for t in tasks_by_phase.get(phase, []) %}
+              <div class="border rounded p-2 mb-2 bg-light">
+                <div class="fw-semibold">#{{ t.id }} <a href="{{ url_for('task_detail', task_id=t.id) }}">{{ t.title }}</a></div>
+                <div class="small text-muted">{{ t.assignee }} ｜ {{ t.priority }} ｜ {{ t.updated_at }}</div>
+                <div class="d-flex gap-1 flex-wrap mt-1">
+                  <form method="post" action="{{ url_for('start_task_route', task_id=t.id) }}"><button class="btn btn-sm btn-outline-primary">启动</button></form>
+                  <form method="post" action="{{ url_for('stop_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-danger">停止</button></form>
+                  <form method="post" action="{{ url_for('retry_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-secondary">重置</button></form>
+                </div>
+              </div>
+              {% endfor %}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <details class="card">
+    <summary class="card-header" style="cursor:pointer;">技术明细表（高级）</summary>
     <div class="card-body py-2 small text-muted">点击任务标题进入详情页，可上传该任务附件、下载该任务产物。</div>
     <div class="table-responsive">
       <table class="table table-sm table-hover mb-0">
@@ -188,7 +222,7 @@
         </tbody>
       </table>
     </div>
-  </div>
+  </details>
 </div>
 <script>
 let autoRefreshEnabled = true;
