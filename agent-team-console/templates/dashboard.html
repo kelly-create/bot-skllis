@@ -58,9 +58,13 @@
           <div class="col-md-3">
             <label class="form-label">任务模板</label>
             <select class="form-select" name="workflow_template" id="workflow_template" onchange="onWorkflowChange()">
-              <option value="custom_brief" selected>通用口语任务（默认）</option>
-              <option value="novel_multiagent">小说类目爆款文包（多Agent复核）</option>
-              <option value="xhs_virtual_keywords">小红书高频词分析（Cookie）</option>
+              {% for wf in workflows %}
+                {% if wf.enabled == 1 %}
+                <option value="{{ wf.code }}" data-default-assignee="{{ wf.default_assignee or '' }}" data-default-task-type="{{ wf.default_task_type or '' }}" {% if wf.code == 'custom_brief' %}selected{% endif %}>
+                  {{ wf.name }}（{{ wf.code }}）
+                </option>
+                {% endif %}
+              {% endfor %}
             </select>
           </div>
           <div class="col-md-9">
@@ -106,12 +110,11 @@
             <div class="col-md-3">
               <label class="form-label">执行角色</label>
               <select class="form-select" name="assignee" title="执行角色">
-                <option value="Lead Agent">Lead Agent（总控/分派）</option>
-                <option value="@backend-integrator">@backend-integrator（后端专家）</option>
-                <option value="@frontend-polisher">@frontend-polisher（前端专家）</option>
-                <option value="@qa-engineer">@qa-engineer（测试专家）</option>
-                <option value="@release-manager">@release-manager（发布专家）</option>
-                <option value="@research-analyst">@research-analyst（调研专家）</option>
+                {% for r in roles %}
+                  {% if r.enabled == 1 %}
+                  <option value="{{ r.code }}" {% if r.code == 'Lead Agent' %}selected{% endif %}>{{ r.name }}（{{ r.code }}）</option>
+                  {% endif %}
+                {% endfor %}
               </select>
             </div>
             <div class="col-md-2">
@@ -138,6 +141,101 @@
         <div class="form-text mt-2">提示：如果模板需要登录态（如小红书），请上传 <code>xhs_cookies.json</code> 到当前任务附件。</div>
         <button class="btn btn-primary mt-2">创建任务</button>
       </form>
+    </div>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header">全局角色中心</div>
+        <div class="card-body small">
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead><tr><th>角色</th><th>模型</th><th>状态</th><th></th></tr></thead>
+              <tbody>
+                {% for r in roles %}
+                <tr>
+                  <td>
+                    <div><b>{{ r.name }}</b></div>
+                    <div class="text-muted">{{ r.code }}</div>
+                  </td>
+                  <td><code>{{ r.default_model or '-' }}</code></td>
+                  <td>{% if r.enabled == 1 %}<span class="badge bg-success">启用</span>{% else %}<span class="badge bg-secondary">停用</span>{% endif %}</td>
+                  <td>
+                    <form method="post" action="{{ url_for('toggle_role', role_id=r.id) }}">
+                      <button class="btn btn-sm btn-outline-secondary">{% if r.enabled == 1 %}停用{% else %}启用{% endif %}</button>
+                    </form>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <details>
+            <summary>新增角色</summary>
+            <form class="row g-2 mt-1" method="post" action="{{ url_for('create_role') }}">
+              <div class="col-md-4"><input class="form-control form-control-sm" name="code" placeholder="code，例如 @developer" required></div>
+              <div class="col-md-4"><input class="form-control form-control-sm" name="name" placeholder="名称，例如 开发 Agent" required></div>
+              <div class="col-md-4"><input class="form-control form-control-sm" name="default_model" placeholder="默认模型"></div>
+              <div class="col-12"><input class="form-control form-control-sm" name="description" placeholder="角色职责描述（可选）"></div>
+              <div class="col-12"><button class="btn btn-sm btn-primary">创建角色</button></div>
+            </form>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="card h-100">
+        <div class="card-header">工作流模板中心</div>
+        <div class="card-body small">
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead><tr><th>模板</th><th>阶段</th><th>默认角色</th><th>状态</th><th></th></tr></thead>
+              <tbody>
+                {% for wf in workflows %}
+                <tr>
+                  <td>
+                    <div><b>{{ wf.name }}</b></div>
+                    <div class="text-muted">{{ wf.code }}</div>
+                  </td>
+                  <td>{{ ' → '.join(wf.stages) if wf.stages else '-' }}</td>
+                  <td>{{ wf.default_assignee or '-' }}</td>
+                  <td>{% if wf.enabled == 1 %}<span class="badge bg-success">启用</span>{% else %}<span class="badge bg-secondary">停用</span>{% endif %}</td>
+                  <td>
+                    <form method="post" action="{{ url_for('toggle_workflow', workflow_id=wf.id) }}">
+                      <button class="btn btn-sm btn-outline-secondary">{% if wf.enabled == 1 %}停用{% else %}启用{% endif %}</button>
+                    </form>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+
+          <details>
+            <summary>新增工作流模板</summary>
+            <form class="row g-2 mt-1" method="post" action="{{ url_for('create_workflow') }}">
+              <div class="col-md-4"><input class="form-control form-control-sm" name="code" placeholder="code，例如 dev_test_verify" required></div>
+              <div class="col-md-4"><input class="form-control form-control-sm" name="name" placeholder="模板名称" required></div>
+              <div class="col-md-4"><input class="form-control form-control-sm" name="default_assignee" placeholder="默认角色，例如 @developer"></div>
+              <div class="col-12"><input class="form-control form-control-sm" name="stages" placeholder="阶段，逗号分隔，例如 开发,测试,验证,交付"></div>
+              <div class="col-12"><input class="form-control form-control-sm" name="description" placeholder="模板描述（可选）"></div>
+              <div class="col-12"><input class="form-control form-control-sm" name="command_template" placeholder="可选：命令模板，支持 __PROJECT_DIR__ 占位符"></div>
+              <div class="col-md-4">
+                <select class="form-select form-select-sm" name="default_task_type">
+                  <option value="general">general</option>
+                  <option value="backend">backend</option>
+                  <option value="research">research</option>
+                  <option value="ops">ops</option>
+                </select>
+              </div>
+              <div class="col-12"><button class="btn btn-sm btn-primary">创建工作流</button></div>
+            </form>
+          </details>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -244,7 +342,20 @@ function onWorkflowChange() {
   const wf = document.getElementById('workflow_template');
   const cmdInput = document.getElementById('command_input');
   const expectation = document.querySelector('input[name="delivery_expectation"]');
+  const assignee = document.querySelector('select[name="assignee"]');
+  const taskType = document.querySelector('select[name="task_type"]');
   if (!wf || !cmdInput) return;
+
+  const opt = wf.options[wf.selectedIndex];
+  const defAssignee = opt?.getAttribute('data-default-assignee') || '';
+  const defTaskType = opt?.getAttribute('data-default-task-type') || '';
+
+  if (defAssignee && assignee) {
+    assignee.value = defAssignee;
+  }
+  if (defTaskType && taskType) {
+    taskType.value = defTaskType;
+  }
 
   if (wf.value === 'novel_multiagent') {
     cmdInput.placeholder = '留空即可：系统会自动生成小说多Agent流水线命令';
@@ -257,7 +368,7 @@ function onWorkflowChange() {
       expectation.value = '需要高频词报告（md/json）和可下载产物';
     }
   } else {
-    cmdInput.placeholder = '留空=通用口语任务演示流程；如需真实执行可填自定义命令';
+    cmdInput.placeholder = '留空=按模板自动生成命令；如模板无命令则进入演示流程';
   }
   formDirty = true;
 }

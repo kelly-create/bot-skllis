@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import os
 import re
 import sqlite3
@@ -273,6 +274,113 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                default_model TEXT,
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflows (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                code TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                description TEXT,
+                stages_json TEXT,
+                default_task_type TEXT,
+                default_assignee TEXT,
+                command_template TEXT,
+                enabled INTEGER DEFAULT 1,
+                created_at TEXT,
+                updated_at TEXT
+            )
+            """
+        )
+
+        # 默认全局角色（创建一次，后续可在页面维护）
+        default_roles = [
+            ("Lead Agent", "Lead Agent", "任务总控与编排", "sydney-proxy/claude-opus-4-6-thinking"),
+            ("@developer", "开发 Agent", "实现功能、改代码、修复问题", "sydney-proxy/gpt-5.3-codex"),
+            ("@tester", "测试 Agent", "回归测试、边界验证、复现问题", "sydney-proxy/gpt-5.2-codex"),
+            ("@verifier", "验证 Agent", "按验收标准做最终核对", "sydney-proxy/claude-opus-4-6-thinking"),
+            ("@release", "发布 Agent", "发布、回滚、变更审计", "sydney-proxy/claude-opus-4-6-thinking"),
+            ("@research", "调研 Agent", "信息检索、数据分析、报告沉淀", "sydney-proxy/gpt-5.2-codex"),
+        ]
+        for code, name, desc, model in default_roles:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO roles(code, name, description, default_model, enabled, created_at, updated_at)
+                VALUES(?,?,?,?,1,?,?)
+                """,
+                (code, name, desc, model, now_str(), now_str()),
+            )
+
+        # 默认全局工作流模板（可复用，不绑定单一业务）
+        default_workflows = [
+            (
+                "custom_brief",
+                "通用口语任务",
+                "口语化描述 + 附件输入，适配任意任务",
+                json.dumps(["需求理解", "执行", "复核", "交付"], ensure_ascii=False),
+                "general",
+                "Lead Agent",
+                "",
+            ),
+            (
+                "dev_test_verify",
+                "开发→测试→验证",
+                "面向代码任务的标准闭环",
+                json.dumps(["开发", "测试", "验证", "交付"], ensure_ascii=False),
+                "backend",
+                "@developer",
+                "",
+            ),
+            (
+                "research_report",
+                "调研→提炼→交付",
+                "面向信息分析与内容生产任务",
+                json.dumps(["调研", "提炼", "复核", "交付"], ensure_ascii=False),
+                "research",
+                "@research",
+                "",
+            ),
+            (
+                "novel_multiagent",
+                "小说类目爆款文包（多Agent）",
+                "采集→清洗→复核→文包",
+                json.dumps(["采集", "清洗", "复核", "文包"], ensure_ascii=False),
+                "research",
+                "Lead Agent",
+                "",
+            ),
+            (
+                "xhs_virtual_keywords",
+                "小红书高频词分析",
+                "关键词采集与高频词报告",
+                json.dumps(["采集", "清洗", "复核", "交付"], ensure_ascii=False),
+                "research",
+                "@research",
+                "cd __PROJECT_DIR__ && python3 scripts/xhs_virtual_keywords.py --keywords '虚拟产品,数字产品,PPT模板,简历模板,教程课程,AI提示词,素材包,资料包' --cookie-file $TASK_INPUT_DIR/xhs_cookies.json --scrolls 4 --auto-related 2 --max-keywords 24 --domain general --strict --min-usable 4 --out-md $TASK_OUTPUT_DIR/xhs_virtual_keywords.md --out-json $TASK_OUTPUT_DIR/xhs_virtual_keywords.json",
+            ),
+        ]
+        for code, name, desc, stages, task_type, assignee, cmd in default_workflows:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO workflows(
+                    code, name, description, stages_json, default_task_type, default_assignee, command_template, enabled, created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?,1,?,?)
+                """,
+                (code, name, desc, stages, task_type, assignee, cmd, now_str(), now_str()),
+            )
 
 
 def get_setting(key: str, default_value: str = "") -> str:
@@ -303,6 +411,52 @@ def sync_runtime_settings():
         val = DEFAULT_MAX_CONCURRENT
     set_setting("max_concurrent", str(val))
     limiter.set_limit(val)
+
+
+def get_roles(enabled_only: bool = False):
+    q = "SELECT * FROM roles"
+    if enabled_only:
+        q += " WHERE enabled=1"
+    q += " ORDER BY CASE WHEN code='Lead Agent' THEN 0 ELSE 1 END, id ASC"
+    with db_conn() as conn:
+        rows = conn.execute(q).fetchall()
+    return rows
+
+
+def get_workflow_by_code(code: str):
+    if not code:
+        return None
+    with db_conn() as conn:
+        return conn.execute("SELECT * FROM workflows WHERE code=?", (code,)).fetchone()
+
+
+def parse_stages(stages_json: str):
+    raw = (stages_json or "").strip()
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [str(x) for x in data]
+    except Exception:
+        pass
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def get_workflows(enabled_only: bool = False):
+    q = "SELECT * FROM workflows"
+    if enabled_only:
+        q += " WHERE enabled=1"
+    q += " ORDER BY id ASC"
+    with db_conn() as conn:
+        rows = conn.execute(q).fetchall()
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["stages"] = parse_stages(d.get("stages_json"))
+        out.append(d)
+    return out
 
 
 def append_log(task_id: int, line: str):
@@ -499,6 +653,9 @@ def dashboard():
         phase = infer_business_phase(t)
         tasks_by_phase.setdefault(phase, []).append(t)
 
+    roles = get_roles(enabled_only=False)
+    workflows = get_workflows(enabled_only=False)
+
     queue_count = max(0, len(running_processes) - limiter.get_running())
     return render_template(
         "dashboard.html",
@@ -506,6 +663,8 @@ def dashboard():
         stats=stats,
         tasks_by_phase=tasks_by_phase,
         phase_order=phase_order,
+        roles=roles,
+        workflows=workflows,
         running_count=len(running_processes),
         queue_count=queue_count,
     )
@@ -556,6 +715,102 @@ def set_concurrency():
     return redirect(url_for("dashboard"))
 
 
+@app.post("/roles")
+@login_required
+def create_role():
+    code = (request.form.get("code") or "").strip()
+    name = (request.form.get("name") or "").strip()
+    description = (request.form.get("description") or "").strip()
+    default_model = (request.form.get("default_model") or "").strip()
+    enabled = 1 if (request.form.get("enabled") or "1") == "1" else 0
+
+    if not code or not name:
+        flash("角色创建失败：code 和 name 不能为空")
+        return redirect(url_for("dashboard"))
+
+    try:
+        with db_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO roles(code, name, description, default_model, enabled, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?)
+                """,
+                (code, name, description, default_model, enabled, now_str(), now_str()),
+            )
+        flash(f"角色已创建：{name}（{code}）")
+    except sqlite3.IntegrityError:
+        flash("角色创建失败：code 已存在")
+    except Exception as e:
+        flash(f"角色创建失败：{e}")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.post("/roles/<int:role_id>/toggle")
+@login_required
+def toggle_role(role_id: int):
+    with db_conn() as conn:
+        row = conn.execute("SELECT enabled, name FROM roles WHERE id=?", (role_id,)).fetchone()
+        if not row:
+            flash("角色不存在")
+            return redirect(url_for("dashboard"))
+        nxt = 0 if int(row["enabled"] or 0) == 1 else 1
+        conn.execute("UPDATE roles SET enabled=?, updated_at=? WHERE id=?", (nxt, now_str(), role_id))
+    flash(f"角色已{'启用' if nxt == 1 else '停用'}：{row['name']}")
+    return redirect(url_for("dashboard"))
+
+
+@app.post("/workflows")
+@login_required
+def create_workflow():
+    code = (request.form.get("code") or "").strip()
+    name = (request.form.get("name") or "").strip()
+    description = (request.form.get("description") or "").strip()
+    stages_text = (request.form.get("stages") or "").strip()
+    default_task_type = (request.form.get("default_task_type") or "general").strip()
+    default_assignee = (request.form.get("default_assignee") or "Lead Agent").strip()
+    command_template = (request.form.get("command_template") or "").strip()
+    enabled = 1 if (request.form.get("enabled") or "1") == "1" else 0
+
+    if not code or not name:
+        flash("工作流创建失败：code 和 name 不能为空")
+        return redirect(url_for("dashboard"))
+
+    stages = [x.strip() for x in re.split(r"[,，\n]+", stages_text) if x.strip()]
+    stages_json = json.dumps(stages, ensure_ascii=False)
+
+    try:
+        with db_conn() as conn:
+            conn.execute(
+                """
+                INSERT INTO workflows(code, name, description, stages_json, default_task_type, default_assignee, command_template, enabled, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
+                """,
+                (code, name, description, stages_json, default_task_type, default_assignee, command_template, enabled, now_str(), now_str()),
+            )
+        flash(f"工作流已创建：{name}（{code}）")
+    except sqlite3.IntegrityError:
+        flash("工作流创建失败：code 已存在")
+    except Exception as e:
+        flash(f"工作流创建失败：{e}")
+
+    return redirect(url_for("dashboard"))
+
+
+@app.post("/workflows/<int:workflow_id>/toggle")
+@login_required
+def toggle_workflow(workflow_id: int):
+    with db_conn() as conn:
+        row = conn.execute("SELECT enabled, name FROM workflows WHERE id=?", (workflow_id,)).fetchone()
+        if not row:
+            flash("工作流不存在")
+            return redirect(url_for("dashboard"))
+        nxt = 0 if int(row["enabled"] or 0) == 1 else 1
+        conn.execute("UPDATE workflows SET enabled=?, updated_at=? WHERE id=?", (nxt, now_str(), workflow_id))
+    flash(f"工作流已{'启用' if nxt == 1 else '停用'}：{row['name']}")
+    return redirect(url_for("dashboard"))
+
+
 def derive_title(title_raw: str, brief: str, template_name: str) -> str:
     title = (title_raw or "").strip()
     if title:
@@ -586,6 +841,11 @@ def build_command_from_template(template_name: str, project_dir: str, task_brief
             "--max-rounds 3 --min-usable 8 --min-domain-ratio 0.75 --max-noise-ratio 0.35 "
             "--pack-format zip"
         )
+
+    # 优先使用工作流中心配置的命令模板
+    wf = get_workflow_by_code(template_name)
+    if wf and (wf["command_template"] or "").strip():
+        return (wf["command_template"] or "").replace("__PROJECT_DIR__", workdir)
 
     if template_name == "xhs_virtual_keywords":
         return (
@@ -624,25 +884,22 @@ def create_task():
         desc_parts.append(f"【补充说明】\n{description_raw}")
     description = "\n\n".join(desc_parts).strip()
 
+    wf = get_workflow_by_code(workflow_template)
+
     task_type = (request.form.get("task_type") or "general").strip()
     assignee = (request.form.get("assignee") or "Lead Agent").strip()
     priority = (request.form.get("priority") or "P2").strip()
 
+    # 若未手工指定，优先套用工作流默认角色/类型
+    if wf:
+        if task_type == "general" and (wf["default_task_type"] or "").strip():
+            task_type = (wf["default_task_type"] or "general").strip()
+        if assignee == "Lead Agent" and (wf["default_assignee"] or "").strip():
+            assignee = (wf["default_assignee"] or "Lead Agent").strip()
+
     command = (request.form.get("command") or "").strip()
     if not command:
         command = build_command_from_template(workflow_template, project_dir, task_brief)
-
-    # 针对模板自动设置更合理的默认角色/类型（用户未手工改时）
-    if workflow_template == "novel_multiagent":
-        if task_type == "general":
-            task_type = "research"
-        if assignee == "Lead Agent":
-            assignee = "Lead Agent"
-    elif workflow_template == "xhs_virtual_keywords":
-        if task_type == "general":
-            task_type = "research"
-        if assignee == "Lead Agent":
-            assignee = "@research-analyst"
 
     with db_conn() as conn:
         cur = conn.execute(
