@@ -308,12 +308,12 @@ def init_db():
 
         # 默认全局角色（创建一次，后续可在页面维护）
         default_roles = [
-            ("Lead Agent", "Lead Agent", "任务总控与编排", "sydney-proxy/claude-opus-4-6-thinking"),
-            ("@developer", "开发 Agent", "实现功能、改代码、修复问题", "sydney-proxy/gpt-5.3-codex"),
-            ("@tester", "测试 Agent", "回归测试、边界验证、复现问题", "sydney-proxy/gpt-5.2-codex"),
-            ("@verifier", "验证 Agent", "按验收标准做最终核对", "sydney-proxy/claude-opus-4-6-thinking"),
-            ("@release", "发布 Agent", "发布、回滚、变更审计", "sydney-proxy/claude-opus-4-6-thinking"),
-            ("@research", "调研 Agent", "信息检索、数据分析、报告沉淀", "sydney-proxy/gpt-5.2-codex"),
+            ("Lead Agent", "Lead Agent", "任务总控与编排", "gpt-5.3-codex"),
+            ("@developer", "开发 Agent", "实现功能、改代码、修复问题", "gpt-5.3-codex"),
+            ("@tester", "测试 Agent", "回归测试、边界验证、复现问题", "gpt-5.3-codex"),
+            ("@verifier", "验证 Agent", "按验收标准做最终核对", "gpt-5.3-codex"),
+            ("@release", "发布 Agent", "发布、回滚、变更审计", "gpt-5.3-codex"),
+            ("@research", "调研 Agent", "信息检索、数据分析、报告沉淀", "gpt-5.3-codex"),
         ]
         for code, name, desc, model in default_roles:
             conn.execute(
