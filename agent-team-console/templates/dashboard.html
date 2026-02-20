@@ -126,16 +126,10 @@
                 <div class="col-md-3">
                   <label class="form-label">任务类型</label>
                   <select class="form-select" name="task_type" title="任务类型">
-                    <option value="general" selected>general</option>
-                    <option value="backend">backend</option>
-                    <option value="frontend">frontend</option>
-                    <option value="qa">qa</option>
-                    <option value="release">release</option>
-                    <option value="research">research</option>
-                    <option value="db">db</option>
-                    <option value="ops">ops</option>
-                    <option value="debug">debug</option>
-                    <option value="docs">docs</option>
+                    <option value="general" selected>general（通用）</option>
+                    <option value="backend">backend（研发）</option>
+                    <option value="research">research（调研）</option>
+                    <option value="ops">ops（运维）</option>
                   </select>
                 </div>
                 <div class="col-md-3">
@@ -198,6 +192,7 @@
                         <form method="post" action="{{ url_for('start_task_route', task_id=t.id) }}"><button class="btn btn-sm btn-outline-primary">启动</button></form>
                         <form method="post" action="{{ url_for('stop_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-danger">停止</button></form>
                         <form method="post" action="{{ url_for('retry_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-secondary">重置</button></form>
+                        <form method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('确认删除任务 #{{ t.id }} 吗？将同时删除日志和该任务附件/产物。');"><button class="btn btn-sm btn-danger">删除</button></form>
                       </div>
                     </div>
                     {% endfor %}
@@ -340,10 +335,10 @@
                 <div class="col-12"><input class="form-control form-control-sm" name="command_template" placeholder="命令模板（可选，支持 __PROJECT_DIR__）"></div>
                 <div class="col-8">
                   <select class="form-select form-select-sm" name="default_task_type">
-                    <option value="general">general</option>
-                    <option value="backend">backend</option>
-                    <option value="research">research</option>
-                    <option value="ops">ops</option>
+                    <option value="general">general（通用）</option>
+                    <option value="backend">backend（研发）</option>
+                    <option value="research">research（调研）</option>
+                    <option value="ops">ops（运维）</option>
                   </select>
                 </div>
                 <div class="col-4 d-grid"><button class="btn btn-sm btn-primary">创建</button></div>
