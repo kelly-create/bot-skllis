@@ -7,6 +7,8 @@ import subprocess
 import threading
 import time
 import shutil
+import urllib.error
+import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import wraps
@@ -22,6 +24,9 @@ APP_SECRET = os.getenv("ATC_APP_SECRET", "change-me-now")
 WORKDIR = os.getenv("ATC_WORKDIR", BASE_DIR)
 DEFAULT_MAX_CONCURRENT = int(os.getenv("ATC_MAX_CONCURRENT", "4"))
 ARTIFACT_ROOT = os.getenv("ATC_ARTIFACT_ROOT", os.path.join(BASE_DIR, "artifacts"))
+ROLE_DEFAULT_API_BASE = os.getenv("ATC_ROLE_DEFAULT_API_BASE", "").strip()
+ROLE_DEFAULT_API_KEY = os.getenv("ATC_ROLE_DEFAULT_API_KEY", "").strip()
+ROLE_DEFAULT_TIMEOUT = int(os.getenv("ATC_ROLE_TIMEOUT_SECONDS", "180"))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 os.makedirs(ARTIFACT_ROOT, exist_ok=True)
@@ -257,6 +262,12 @@ def db_conn():
         conn.close()
 
 
+def ensure_column(conn, table: str, column: str, decl: str):
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def init_db():
     with db_conn() as conn:
         conn.execute(
@@ -329,6 +340,28 @@ def init_db():
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS role_session_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id INTEGER NOT NULL,
+                role_code TEXT NOT NULL,
+                stage TEXT,
+                turn TEXT NOT NULL,
+                content TEXT,
+                created_at TEXT
+            )
+            """
+        )
+
+        # 历史库兼容：按需补字段
+        ensure_column(conn, "tasks", "workflow_code", "TEXT")
+        ensure_column(conn, "roles", "api_base", "TEXT")
+        ensure_column(conn, "roles", "api_key", "TEXT")
+        ensure_column(conn, "roles", "system_prompt", "TEXT")
+        ensure_column(conn, "roles", "temperature", "REAL DEFAULT 0.3")
+        ensure_column(conn, "roles", "max_tokens", "INTEGER DEFAULT 1200")
+        ensure_column(conn, "workflows", "stage_roles_json", "TEXT")
 
         # 默认全局角色（创建一次，后续可在页面维护）
         default_roles = [
@@ -346,6 +379,26 @@ def init_db():
                 VALUES(?,?,?,?,1,?,?)
                 """,
                 (code, name, desc, model, now_str(), now_str()),
+            )
+
+        # 给未配置角色注入环境级默认 API（可为空，不强制）
+        if ROLE_DEFAULT_API_BASE:
+            conn.execute(
+                """
+                UPDATE roles
+                SET api_base = CASE WHEN api_base IS NULL OR api_base='' THEN ? ELSE api_base END,
+                    updated_at=?
+                """,
+                (ROLE_DEFAULT_API_BASE, now_str()),
+            )
+        if ROLE_DEFAULT_API_KEY:
+            conn.execute(
+                """
+                UPDATE roles
+                SET api_key = CASE WHEN api_key IS NULL OR api_key='' THEN ? ELSE api_key END,
+                    updated_at=?
+                """,
+                (ROLE_DEFAULT_API_KEY, now_str()),
             )
 
         # 默认全局工作流模板（可复用，不绑定单一业务）
@@ -406,6 +459,24 @@ def init_db():
                 (code, name, desc, stages, task_type, assignee, cmd, now_str(), now_str()),
             )
 
+        stage_role_defaults = {
+            "custom_brief": {"需求理解": "Lead Agent", "执行": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
+            "dev_test_verify": {"开发": "@developer", "测试": "@tester", "验证": "@verifier", "交付": "@release"},
+            "research_report": {"调研": "@research", "提炼": "@research", "复核": "@verifier", "交付": "Lead Agent"},
+            "novel_multiagent": {"采集": "@research", "清洗": "@developer", "复核": "@verifier", "文包": "@release"},
+            "xhs_virtual_keywords": {"采集": "@research", "清洗": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
+        }
+        for wf_code, mapping in stage_role_defaults.items():
+            conn.execute(
+                """
+                UPDATE workflows
+                SET stage_roles_json = CASE WHEN stage_roles_json IS NULL OR stage_roles_json='' THEN ? ELSE stage_roles_json END,
+                    updated_at=?
+                WHERE code=?
+                """,
+                (json.dumps(mapping, ensure_ascii=False), now_str(), wf_code),
+            )
+
 
 def get_setting(key: str, default_value: str = "") -> str:
     with db_conn() as conn:
@@ -444,7 +515,14 @@ def get_roles(enabled_only: bool = False):
     q += " ORDER BY CASE WHEN code='Lead Agent' THEN 0 ELSE 1 END, id ASC"
     with db_conn() as conn:
         rows = conn.execute(q).fetchall()
-    return rows
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["api_ready"] = bool((d.get("api_base") or "").strip() and (d.get("api_key") or "").strip() and (d.get("default_model") or "").strip())
+        d["api_key_masked"] = mask_secret(d.get("api_key") or "")
+        out.append(d)
+    return out
 
 
 def get_workflow_by_code(code: str):
@@ -452,6 +530,22 @@ def get_workflow_by_code(code: str):
         return None
     with db_conn() as conn:
         return conn.execute("SELECT * FROM workflows WHERE code=?", (code,)).fetchone()
+
+
+def get_role_by_code(code: str):
+    if not code:
+        return None
+    with db_conn() as conn:
+        return conn.execute("SELECT * FROM roles WHERE code=?", (code,)).fetchone()
+
+
+def mask_secret(secret: str) -> str:
+    s = (secret or "").strip()
+    if not s:
+        return ""
+    if len(s) <= 8:
+        return "*" * len(s)
+    return s[:4] + "..." + s[-4:]
 
 
 def parse_stages(stages_json: str):
@@ -464,7 +558,36 @@ def parse_stages(stages_json: str):
             return [str(x) for x in data]
     except Exception:
         pass
-    return [x.strip() for x in raw.split(",") if x.strip()]
+    return [x.strip() for x in re.split(r"[,，\n]+", raw) if x.strip()]
+
+
+def parse_stage_roles(stage_roles_json: str):
+    raw = (stage_roles_json or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items() if str(k).strip() and str(v).strip()}
+    except Exception:
+        pass
+
+    out = {}
+    for part in re.split(r"[,，\n]+", raw):
+        p = part.strip()
+        if not p:
+            continue
+        if ":" in p:
+            k, v = p.split(":", 1)
+        elif "=" in p:
+            k, v = p.split("=", 1)
+        else:
+            continue
+        k = k.strip()
+        v = v.strip()
+        if k and v:
+            out[k] = v
+    return out
 
 
 def get_workflows(enabled_only: bool = False):
@@ -479,6 +602,7 @@ def get_workflows(enabled_only: bool = False):
     for r in rows:
         d = dict(r)
         d["stages"] = parse_stages(d.get("stages_json"))
+        d["stage_roles"] = parse_stage_roles(d.get("stage_roles_json"))
         out.append(d)
     return out
 
@@ -505,6 +629,207 @@ def update_task(task_id: int, **fields):
 def get_task(task_id: int):
     with db_conn() as conn:
         return conn.execute("SELECT * FROM tasks WHERE id=?", (task_id,)).fetchone()
+
+
+def save_role_message(task_id: int, role_code: str, stage: str, turn: str, content: str):
+    with db_conn() as conn:
+        conn.execute(
+            "INSERT INTO role_session_messages(task_id, role_code, stage, turn, content, created_at) VALUES(?,?,?,?,?,?)",
+            (task_id, role_code, stage, turn, (content or "")[:12000], now_str()),
+        )
+
+
+def load_role_messages(task_id: int, role_code: str, limit: int = 8):
+    with db_conn() as conn:
+        rows = conn.execute(
+            "SELECT turn, content FROM role_session_messages WHERE task_id=? AND role_code=? ORDER BY id DESC LIMIT ?",
+            (task_id, role_code, max(1, int(limit))),
+        ).fetchall()
+    return list(reversed(rows))
+
+
+def parse_task_sections(description: str):
+    text = (description or "").strip()
+    out = {"task": "", "delivery": "", "extra": text}
+    if not text:
+        return out
+
+    m_task = re.search(r"【任务描述】\n([\s\S]*?)(?:\n\n【|$)", text)
+    m_delivery = re.search(r"【期望交付】\n([\s\S]*?)(?:\n\n【|$)", text)
+    m_extra = re.search(r"【补充说明】\n([\s\S]*?)$", text)
+
+    if m_task:
+        out["task"] = m_task.group(1).strip()
+    if m_delivery:
+        out["delivery"] = m_delivery.group(1).strip()
+    if m_extra:
+        out["extra"] = m_extra.group(1).strip()
+    return out
+
+
+def ensure_not_stopped(task_id: int):
+    if task_id not in running_processes:
+        raise RuntimeError("任务被手动停止")
+
+
+def _extract_content_from_chat_response(data: dict) -> str:
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    msg = (choices[0] or {}).get("message") or {}
+    content = msg.get("content")
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    parts.append(item.get("text") or "")
+                elif "text" in item:
+                    parts.append(str(item.get("text")))
+            else:
+                parts.append(str(item))
+        return "\n".join([p for p in parts if p]).strip()
+    return (content or "").strip()
+
+
+def call_role_llm(role, messages):
+    api_base = (role["api_base"] or ROLE_DEFAULT_API_BASE or "").strip()
+    api_key = (role["api_key"] or ROLE_DEFAULT_API_KEY or "").strip()
+    model = (role["default_model"] or "").strip()
+
+    if not api_base:
+        raise RuntimeError(f"角色 {role['code']} 未配置 api_base")
+    if not api_key:
+        raise RuntimeError(f"角色 {role['code']} 未配置 api_key")
+    if not model:
+        raise RuntimeError(f"角色 {role['code']} 未配置模型")
+
+    url = api_base.rstrip("/") + "/v1/chat/completions"
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": float(role["temperature"] if role["temperature"] is not None else 0.3),
+        "max_tokens": int(role["max_tokens"] if role["max_tokens"] is not None else 1200),
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    timeout = max(30, ROLE_DEFAULT_TIMEOUT)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="ignore") if hasattr(e, "read") else str(e)
+        raise RuntimeError(f"角色 {role['code']} 模型请求失败: HTTP {getattr(e, 'code', '?')} {detail[:200]}")
+    except Exception as e:
+        raise RuntimeError(f"角色 {role['code']} 模型请求异常: {e}")
+
+    try:
+        data = json.loads(raw)
+    except Exception:
+        raise RuntimeError(f"角色 {role['code']} 返回非JSON: {raw[:200]}")
+
+    text = _extract_content_from_chat_response(data)
+    if not text:
+        raise RuntimeError(f"角色 {role['code']} 返回空内容")
+    return text
+
+
+def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
+    stages = parse_stages(wf["stages_json"])
+    stage_roles = parse_stage_roles(wf["stage_roles_json"])
+    if not stages:
+        raise RuntimeError("工作流没有配置阶段")
+
+    sections = parse_task_sections(task["description"] or "")
+    previous_output = ""
+    audit = {
+        "taskId": task_id,
+        "workflow": wf["code"],
+        "stages": [],
+        "startedAt": now_str(),
+    }
+
+    for idx, stage in enumerate(stages, 1):
+        ensure_not_stopped(task_id)
+
+        role_code = stage_roles.get(stage) or (wf["default_assignee"] or "") or (task["assignee"] or "Lead Agent")
+        role = get_role_by_code(role_code)
+        if not role:
+            raise RuntimeError(f"阶段 {stage} 找不到角色: {role_code}")
+        if int(role["enabled"] or 0) != 1:
+            raise RuntimeError(f"阶段 {stage} 角色未启用: {role_code}")
+
+        append_log(task_id, f"[Lead Agent] 阶段{idx}/{len(stages)}：{stage} -> {role_code}")
+
+        history = load_role_messages(task_id, role_code, limit=8)
+        sys_prompt = (role["system_prompt"] or "").strip()
+        if not sys_prompt:
+            sys_prompt = f"你是{role['name']}（{role['code']}），职责：{role['description'] or '完成被分配阶段并输出可执行结果'}。"
+
+        user_prompt = (
+            f"你当前负责阶段：{stage}\n"
+            f"任务标题：{task['title']}\n"
+            f"任务描述：{sections.get('task') or task['description'] or ''}\n"
+            f"期望交付：{sections.get('delivery') or ''}\n"
+            f"补充说明：{sections.get('extra') or ''}\n"
+            f"上一个阶段输出（若为空可忽略）：\n{previous_output}\n\n"
+            "请直接输出本阶段可交付内容（中文，结构化，避免空话）。"
+        )
+
+        messages = [{"role": "system", "content": sys_prompt}]
+        for h in history:
+            turn = (h["turn"] or "").strip().lower()
+            if turn not in ("user", "assistant", "system"):
+                continue
+            messages.append({"role": turn, "content": h["content"] or ""})
+        messages.append({"role": "user", "content": user_prompt})
+
+        save_role_message(task_id, role_code, stage, "user", user_prompt)
+        output = call_role_llm(role, messages)
+        save_role_message(task_id, role_code, stage, "assistant", output)
+        previous_output = output
+
+        stage_file = os.path.join(output_dir, f"阶段{idx}_{stage}_{role_code.replace('@', 'at_').replace(' ', '_')}.md")
+        with open(stage_file, "w", encoding="utf-8") as f:
+            f.write(f"# 阶段{idx}：{stage}\n\n")
+            f.write(f"角色：{role['name']}（{role['code']}）\n\n")
+            f.write(output + "\n")
+
+        audit["stages"].append(
+            {
+                "index": idx,
+                "stage": stage,
+                "role": role_code,
+                "model": role["default_model"],
+                "outputFile": os.path.basename(stage_file),
+                "outputChars": len(output),
+                "finishedAt": now_str(),
+            }
+        )
+        append_log(task_id, f"[{role_code}] 阶段完成，输出长度={len(output)}")
+
+    final_file = os.path.join(output_dir, "多Agent_最终交付.md")
+    with open(final_file, "w", encoding="utf-8") as f:
+        f.write(f"# 多Agent最终交付\n\n任务：{task['title']}\n\n")
+        f.write(previous_output + "\n")
+
+    audit["finishedAt"] = now_str()
+    audit["finalFile"] = os.path.basename(final_file)
+    audit_file = os.path.join(output_dir, "多Agent_会话审计.json")
+    with open(audit_file, "w", encoding="utf-8") as f:
+        json.dump(audit, f, ensure_ascii=False, indent=2)
+
+    append_log(task_id, f"[Lead Agent] 多Agent独立会话完成，最终交付：{os.path.basename(final_file)}")
 
 
 def login_required(fn):
@@ -539,16 +864,33 @@ def run_task(task_id: int):
 
         cmd = (task["command"] or "").strip()
         if not cmd:
+            wf_code = (task["workflow_code"] or "").strip() if "workflow_code" in task.keys() else ""
+            if wf_code:
+                try:
+                    wf = get_workflow_by_code(wf_code)
+                    if not wf:
+                        raise RuntimeError(f"未找到工作流: {wf_code}")
+                    append_log(task_id, f"[SYSTEM] 启动多Agent独立会话流程：{wf_code}")
+                    run_multi_agent_workflow(task_id, task, wf, output_dir)
+                    update_task(task_id, status="done", finished_at=now_str(), return_code=0)
+                    append_log(task_id, "[SYSTEM] 任务完成（多Agent独立会话）")
+                except Exception as e:
+                    update_task(task_id, status="failed", finished_at=now_str(), return_code=1)
+                    append_log(task_id, f"[SYSTEM] 多Agent流程失败：{e}")
+                finally:
+                    running_processes.pop(task_id, None)
+                return
+
+            # 无工作流时保留演示流程
             try:
                 for step in [
                     "Lead Agent 正在拆解任务...",
-                    "Backend Agent 正在生成接口变更草案...",
-                    "Frontend Agent 正在生成页面改动草案...",
-                    "QA Agent 正在准备回归测试...",
-                    "Lead Agent 正在汇总结果...",
+                    "Developer Agent 正在执行任务...",
+                    "Tester Agent 正在复核结果...",
+                    "Verifier Agent 正在做最终核验...",
+                    "Lead Agent 正在汇总交付...",
                 ]:
-                    if task_id in running_processes and running_processes[task_id] is None:
-                        raise RuntimeError("任务被手动停止")
+                    ensure_not_stopped(task_id)
                     append_log(task_id, step)
                     time.sleep(2)
                 update_task(task_id, status="done", finished_at=now_str(), return_code=0)
@@ -745,7 +1087,10 @@ def create_role():
     code = (request.form.get("code") or "").strip()
     name = (request.form.get("name") or "").strip()
     description = (request.form.get("description") or "").strip()
-    default_model = (request.form.get("default_model") or "").strip()
+    default_model = (request.form.get("default_model") or "").strip() or "gpt-5.3-codex"
+    api_base = (request.form.get("api_base") or "").strip()
+    api_key = (request.form.get("api_key") or "").strip()
+    system_prompt = (request.form.get("system_prompt") or "").strip()
     enabled = 1 if (request.form.get("enabled") or "1") == "1" else 0
 
     if not code or not name:
@@ -756,10 +1101,10 @@ def create_role():
         with db_conn() as conn:
             conn.execute(
                 """
-                INSERT INTO roles(code, name, description, default_model, enabled, created_at, updated_at)
-                VALUES(?,?,?,?,?,?,?)
+                INSERT INTO roles(code, name, description, default_model, api_base, api_key, system_prompt, enabled, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)
                 """,
-                (code, name, description, default_model, enabled, now_str(), now_str()),
+                (code, name, description, default_model, api_base, api_key, system_prompt, enabled, now_str(), now_str()),
             )
         flash(f"角色已创建：{name}（{code}）")
     except sqlite3.IntegrityError:
@@ -784,6 +1129,64 @@ def toggle_role(role_id: int):
     return redirect(url_for("dashboard"))
 
 
+@app.post("/roles/<int:role_id>/config")
+@login_required
+def update_role_config(role_id: int):
+    default_model = (request.form.get("default_model") or "").strip()
+    api_base = (request.form.get("api_base") or "").strip()
+    api_key = (request.form.get("api_key") or "").strip()
+    system_prompt = (request.form.get("system_prompt") or "").strip()
+    temperature = (request.form.get("temperature") or "").strip()
+    max_tokens = (request.form.get("max_tokens") or "").strip()
+
+    with db_conn() as conn:
+        row = conn.execute("SELECT * FROM roles WHERE id=?", (role_id,)).fetchone()
+        if not row:
+            flash("角色不存在")
+            return redirect(url_for("dashboard"))
+
+        fields = {
+            "default_model": default_model or row["default_model"],
+            "api_base": api_base or row["api_base"],
+            "system_prompt": system_prompt if system_prompt else (row["system_prompt"] or ""),
+            "updated_at": now_str(),
+        }
+
+        # api_key 为空时保持原值
+        fields["api_key"] = api_key if api_key else (row["api_key"] or "")
+
+        try:
+            fields["temperature"] = float(temperature) if temperature else (row["temperature"] if row["temperature"] is not None else 0.3)
+        except Exception:
+            fields["temperature"] = row["temperature"] if row["temperature"] is not None else 0.3
+
+        try:
+            fields["max_tokens"] = int(max_tokens) if max_tokens else (row["max_tokens"] if row["max_tokens"] is not None else 1200)
+        except Exception:
+            fields["max_tokens"] = row["max_tokens"] if row["max_tokens"] is not None else 1200
+
+        conn.execute(
+            """
+            UPDATE roles
+            SET default_model=?, api_base=?, api_key=?, system_prompt=?, temperature=?, max_tokens=?, updated_at=?
+            WHERE id=?
+            """,
+            (
+                fields["default_model"],
+                fields["api_base"],
+                fields["api_key"],
+                fields["system_prompt"],
+                fields["temperature"],
+                fields["max_tokens"],
+                fields["updated_at"],
+                role_id,
+            ),
+        )
+
+    flash(f"角色配置已更新：{row['name']}")
+    return redirect(url_for("dashboard"))
+
+
 @app.post("/workflows")
 @login_required
 def create_workflow():
@@ -791,6 +1194,7 @@ def create_workflow():
     name = (request.form.get("name") or "").strip()
     description = (request.form.get("description") or "").strip()
     stages_text = (request.form.get("stages") or "").strip()
+    stage_roles_text = (request.form.get("stage_roles") or "").strip()
     default_task_type = (request.form.get("default_task_type") or "general").strip()
     default_assignee = (request.form.get("default_assignee") or "Lead Agent").strip()
     command_template = (request.form.get("command_template") or "").strip()
@@ -801,16 +1205,30 @@ def create_workflow():
         return redirect(url_for("dashboard"))
 
     stages = [x.strip() for x in re.split(r"[,，\n]+", stages_text) if x.strip()]
+    stage_roles = parse_stage_roles(stage_roles_text)
     stages_json = json.dumps(stages, ensure_ascii=False)
+    stage_roles_json = json.dumps(stage_roles, ensure_ascii=False)
 
     try:
         with db_conn() as conn:
             conn.execute(
                 """
-                INSERT INTO workflows(code, name, description, stages_json, default_task_type, default_assignee, command_template, enabled, created_at, updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?)
+                INSERT INTO workflows(code, name, description, stages_json, stage_roles_json, default_task_type, default_assignee, command_template, enabled, created_at, updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """,
-                (code, name, description, stages_json, default_task_type, default_assignee, command_template, enabled, now_str(), now_str()),
+                (
+                    code,
+                    name,
+                    description,
+                    stages_json,
+                    stage_roles_json,
+                    default_task_type,
+                    default_assignee,
+                    command_template,
+                    enabled,
+                    now_str(),
+                    now_str(),
+                ),
             )
         flash(f"工作流已创建：{name}（{code}）")
     except sqlite3.IntegrityError:
@@ -928,10 +1346,10 @@ def create_task():
     with db_conn() as conn:
         cur = conn.execute(
             """
-            INSERT INTO tasks(title, description, task_type, assignee, priority, status, command, created_at, updated_at)
-            VALUES(?,?,?,?,?,'pending',?,?,?)
+            INSERT INTO tasks(title, description, task_type, assignee, priority, status, command, workflow_code, created_at, updated_at)
+            VALUES(?,?,?,?,?,'pending',?,?,?,?)
             """,
-            (title, description, task_type, assignee, priority, command, now_str(), now_str()),
+            (title, description, task_type, assignee, priority, command, workflow_template, now_str(), now_str()),
         )
         task_id = cur.lastrowid
 
@@ -1025,6 +1443,7 @@ def delete_task(task_id: int):
     try:
         with db_conn() as conn:
             conn.execute("DELETE FROM task_logs WHERE task_id=?", (task_id,))
+            conn.execute("DELETE FROM role_session_messages WHERE task_id=?", (task_id,))
             conn.execute("DELETE FROM tasks WHERE id=?", (task_id,))
 
         task_dir = os.path.join(ARTIFACT_ROOT, f"task_{task_id}")

@@ -283,11 +283,14 @@
         </div>
 
         <div class="card soft-card mb-3">
-          <div class="card-header">全局角色中心</div>
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <span>全局角色中心</span>
+            <span class="small text-muted">独立会话按角色各自模型/API执行</span>
+          </div>
           <div class="card-body small">
             <div class="table-responsive mb-2">
               <table class="table table-sm align-middle">
-                <thead><tr><th>角色</th><th>模型</th><th>状态</th><th></th></tr></thead>
+                <thead><tr><th>角色</th><th>模型</th><th>API</th><th>状态</th><th></th></tr></thead>
                 <tbody>
                   {% for r in roles %}
                   <tr>
@@ -296,11 +299,35 @@
                       <div class="text-muted">{{ r.code }}</div>
                     </td>
                     <td><code>{{ r.default_model or '-' }}</code></td>
+                    <td>
+                      {% if r.api_ready %}
+                        <span class="badge bg-success">已配置</span>
+                        <div class="text-muted">{{ r.api_key_masked }}</div>
+                      {% else %}
+                        <span class="badge bg-warning text-dark">未配置</span>
+                      {% endif %}
+                    </td>
                     <td>{% if r.enabled == 1 %}<span class="badge bg-success">启用</span>{% else %}<span class="badge bg-secondary">停用</span>{% endif %}</td>
                     <td>
-                      <form method="post" action="{{ url_for('toggle_role', role_id=r.id) }}">
+                      <form method="post" action="{{ url_for('toggle_role', role_id=r.id) }}" class="mb-1">
                         <button class="btn btn-sm btn-outline-secondary">{% if r.enabled == 1 %}停用{% else %}启用{% endif %}</button>
                       </form>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td colspan="5" class="bg-light-subtle">
+                      <details>
+                        <summary>配置 {{ r.code }}（模型/API/提示词）</summary>
+                        <form class="row g-2 mt-1" method="post" action="{{ url_for('update_role_config', role_id=r.id) }}">
+                          <div class="col-md-4"><input class="form-control form-control-sm" name="default_model" value="{{ r.default_model or '' }}" placeholder="模型，例如 gpt-5.3-codex"></div>
+                          <div class="col-md-8"><input class="form-control form-control-sm" name="api_base" value="{{ r.api_base or '' }}" placeholder="API Base，例如 https://api.openai.com"></div>
+                          <div class="col-md-6"><input class="form-control form-control-sm" name="api_key" placeholder="API Key（留空=不修改）"></div>
+                          <div class="col-md-3"><input class="form-control form-control-sm" name="temperature" value="{{ r.temperature if r.temperature is not none else 0.3 }}" placeholder="temperature"></div>
+                          <div class="col-md-3"><input class="form-control form-control-sm" name="max_tokens" value="{{ r.max_tokens if r.max_tokens is not none else 1200 }}" placeholder="max_tokens"></div>
+                          <div class="col-12"><input class="form-control form-control-sm" name="system_prompt" value="{{ r.system_prompt or '' }}" placeholder="角色系统提示词（可选）"></div>
+                          <div class="col-12"><button class="btn btn-sm btn-primary">保存配置</button></div>
+                        </form>
+                      </details>
                     </td>
                   </tr>
                   {% endfor %}
@@ -311,9 +338,12 @@
             <details>
               <summary>新增角色</summary>
               <form class="row g-2 mt-1" method="post" action="{{ url_for('create_role') }}">
-                <div class="col-12"><input class="form-control form-control-sm" name="code" placeholder="code，例如 @developer" required></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="name" placeholder="名称，例如 开发 Agent" required></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="default_model" placeholder="默认模型（可选）"></div>
+                <div class="col-6"><input class="form-control form-control-sm" name="code" placeholder="code，例如 @developer" required></div>
+                <div class="col-6"><input class="form-control form-control-sm" name="name" placeholder="名称，例如 开发 Agent" required></div>
+                <div class="col-12"><input class="form-control form-control-sm" name="default_model" value="gpt-5.3-codex" placeholder="默认模型"></div>
+                <div class="col-12"><input class="form-control form-control-sm" name="api_base" placeholder="API Base（可选）"></div>
+                <div class="col-12"><input class="form-control form-control-sm" name="api_key" placeholder="API Key（可选）"></div>
+                <div class="col-12"><input class="form-control form-control-sm" name="system_prompt" placeholder="系统提示词（可选）"></div>
                 <div class="col-12"><input class="form-control form-control-sm" name="description" placeholder="职责描述（可选）"></div>
                 <div class="col-12"><button class="btn btn-sm btn-primary">创建角色</button></div>
               </form>
@@ -326,7 +356,7 @@
           <div class="card-body small">
             <div class="table-responsive mb-2">
               <table class="table table-sm align-middle">
-                <thead><tr><th>模板</th><th>阶段</th><th>默认角色</th><th></th></tr></thead>
+                <thead><tr><th>模板</th><th>阶段</th><th>阶段→角色</th><th>默认角色</th><th></th></tr></thead>
                 <tbody>
                   {% for wf in workflows %}
                   <tr>
@@ -335,6 +365,15 @@
                       <div class="text-muted">{{ wf.code }}</div>
                     </td>
                     <td>{{ ' → '.join(wf.stages) if wf.stages else '-' }}</td>
+                    <td>
+                      {% if wf.stage_roles %}
+                        {% for k,v in wf.stage_roles.items() %}
+                          <div class="text-muted">{{ k }} → {{ v }}</div>
+                        {% endfor %}
+                      {% else %}
+                        <span class="text-muted">-</span>
+                      {% endif %}
+                    </td>
                     <td>{{ wf.default_assignee or '-' }}</td>
                     <td>
                       <form method="post" action="{{ url_for('toggle_workflow', workflow_id=wf.id) }}">
@@ -354,6 +393,7 @@
                 <div class="col-12"><input class="form-control form-control-sm" name="name" placeholder="模板名称" required></div>
                 <div class="col-12"><input class="form-control form-control-sm" name="default_assignee" placeholder="默认角色，例如 @developer"></div>
                 <div class="col-12"><input class="form-control form-control-sm" name="stages" placeholder="阶段，逗号分隔，如 开发,测试,验证,交付"></div>
+                <div class="col-12"><input class="form-control form-control-sm" name="stage_roles" placeholder="阶段角色映射，如 开发:@developer,测试:@tester,验证:@verifier"></div>
                 <div class="col-12"><input class="form-control form-control-sm" name="description" placeholder="模板描述（可选）"></div>
                 <div class="col-12"><input class="form-control form-control-sm" name="command_template" placeholder="命令模板（可选，支持 __PROJECT_DIR__）"></div>
                 <div class="col-8">
@@ -378,6 +418,7 @@
               <li><b>停止</b>：中止任务并标记失败。</li>
               <li><b>重置</b>：将 done/failed 恢复成 pending。</li>
               <li><b>任务详情</b>：查看交付总览、下载产物、看实时日志。</li>
+              <li><b>真多Agent提醒</b>：若任务命令为空，会按工作流走角色独立会话；需先在“角色中心”配置每个角色的 API/模型。</li>
             </ul>
           </div>
         </div>
