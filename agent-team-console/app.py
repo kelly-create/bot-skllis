@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 import sqlite3
 import subprocess
 import threading
@@ -473,19 +474,93 @@ def set_concurrency():
     return redirect(url_for("dashboard"))
 
 
+def derive_title(title_raw: str, brief: str, template_name: str) -> str:
+    title = (title_raw or "").strip()
+    if title:
+        return title
+    brief_line = re.sub(r"\s+", " ", (brief or "").strip())
+    if brief_line:
+        return (brief_line[:36] + "...") if len(brief_line) > 36 else brief_line
+    mapping = {
+        "novel_multiagent": "小说类目爆款文包任务",
+        "xhs_virtual_keywords": "小红书高频词任务",
+        "custom_brief": "口语化任务",
+    }
+    return mapping.get(template_name, "新任务")
+
+
+def build_command_from_template(template_name: str, project_dir: str, task_brief: str) -> str:
+    workdir = (project_dir or WORKDIR).strip() or WORKDIR
+
+    if template_name == "novel_multiagent":
+        keywords = "小说推文,小说推荐,网文,言情小说,悬疑小说,完结小说,书荒推荐,番茄小说,爽文小说,推理小说"
+        if "小红书" not in task_brief and "小说" in task_brief:
+            keywords = "小说推荐,网文推荐,言情小说,悬疑小说,推理小说,书荒推荐,完结小说"
+        return (
+            f"cd {workdir} && python3 scripts/xhs_novel_multiagent_pipeline.py "
+            f"--keywords '{keywords}' "
+            "--cookie-file $TASK_INPUT_DIR/xhs_cookies.json "
+            "--output-dir $TASK_OUTPUT_DIR "
+            "--max-rounds 3 --min-usable 8 --min-domain-ratio 0.75 --max-noise-ratio 0.35 "
+            "--pack-format zip"
+        )
+
+    if template_name == "xhs_virtual_keywords":
+        return (
+            f"cd {workdir} && python3 scripts/xhs_virtual_keywords.py "
+            "--keywords '虚拟产品,数字产品,PPT模板,简历模板,教程课程,AI提示词,素材包,资料包' "
+            "--cookie-file $TASK_INPUT_DIR/xhs_cookies.json "
+            "--scrolls 4 --auto-related 2 --max-keywords 24 --domain general "
+            "--strict --min-usable 4 "
+            "--out-md $TASK_OUTPUT_DIR/xhs_virtual_keywords.md "
+            "--out-json $TASK_OUTPUT_DIR/xhs_virtual_keywords.json"
+        )
+
+    return ""
+
+
 @app.post("/tasks")
 @login_required
 def create_task():
-    title = (request.form.get("title") or "").strip()
+    workflow_template = (request.form.get("workflow_template") or "custom_brief").strip()
+    task_brief = (request.form.get("task_brief") or "").strip()
+    delivery_expectation = (request.form.get("delivery_expectation") or "").strip()
+    project_dir = (request.form.get("project_dir") or "").strip()
+
+    title = derive_title(request.form.get("title", ""), task_brief, workflow_template)
     if not title:
-        flash("标题不能为空")
+        flash("请至少填写任务描述或标题")
         return redirect(url_for("dashboard"))
 
-    description = request.form.get("description", "").strip()
-    task_type = request.form.get("task_type", "general").strip()
-    assignee = request.form.get("assignee", "Lead Agent").strip()
-    priority = request.form.get("priority", "P2").strip()
-    command = request.form.get("command", "").strip()
+    description_raw = (request.form.get("description", "") or "").strip()
+    desc_parts = []
+    if task_brief:
+        desc_parts.append(f"【任务描述】\n{task_brief}")
+    if delivery_expectation:
+        desc_parts.append(f"【期望交付】\n{delivery_expectation}")
+    if description_raw:
+        desc_parts.append(f"【补充说明】\n{description_raw}")
+    description = "\n\n".join(desc_parts).strip()
+
+    task_type = (request.form.get("task_type") or "general").strip()
+    assignee = (request.form.get("assignee") or "Lead Agent").strip()
+    priority = (request.form.get("priority") or "P2").strip()
+
+    command = (request.form.get("command") or "").strip()
+    if not command:
+        command = build_command_from_template(workflow_template, project_dir, task_brief)
+
+    # 针对模板自动设置更合理的默认角色/类型（用户未手工改时）
+    if workflow_template == "novel_multiagent":
+        if task_type == "general":
+            task_type = "research"
+        if assignee == "Lead Agent":
+            assignee = "Lead Agent"
+    elif workflow_template == "xhs_virtual_keywords":
+        if task_type == "general":
+            task_type = "research"
+        if assignee == "Lead Agent":
+            assignee = "@research-analyst"
 
     with db_conn() as conn:
         cur = conn.execute(
@@ -498,6 +573,11 @@ def create_task():
         task_id = cur.lastrowid
 
     append_log(task_id, f"[SYSTEM] 任务创建：{title}")
+    append_log(task_id, f"[SYSTEM] 工作流模板：{workflow_template}")
+    if task_brief:
+        append_log(task_id, f"[SYSTEM] 口语化任务描述：{task_brief[:1200]}")
+    if delivery_expectation:
+        append_log(task_id, f"[SYSTEM] 期望交付：{delivery_expectation[:800]}")
 
     _, input_dir, _ = task_artifact_dirs(task_id)
     uploaded = 0

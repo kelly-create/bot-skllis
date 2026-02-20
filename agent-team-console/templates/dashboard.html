@@ -51,86 +51,91 @@
   </div>
 
   <div class="card mb-3">
-    <div class="card-header">新建任务</div>
+    <div class="card-header">新建任务（口语化）</div>
     <div class="card-body">
       <form method="post" action="{{ url_for('create_task') }}" enctype="multipart/form-data">
         <div class="row g-2">
-          <div class="col-md-4"><input class="form-control" name="title" placeholder="任务标题（必填）" required /></div>
-          <div class="col-md-2">
-            <select class="form-select" name="task_type" title="任务类型">
-              <option value="general" selected>general（通用任务）</option>
-              <option value="backend">backend（后端接口开发）</option>
-              <option value="frontend">frontend（前端页面开发）</option>
-              <option value="qa">qa（测试与回归）</option>
-              <option value="release">release（发布部署）</option>
-              <option value="research">research（技术调研）</option>
-              <option value="db">db（数据库与迁移）</option>
-              <option value="ops">ops（运维与环境）</option>
-              <option value="debug">debug（故障排查）</option>
-              <option value="docs">docs（文档整理）</option>
+          <div class="col-md-3">
+            <label class="form-label">任务模板</label>
+            <select class="form-select" name="workflow_template" id="workflow_template" onchange="onWorkflowChange()">
+              <option value="custom_brief" selected>通用口语任务（默认）</option>
+              <option value="novel_multiagent">小说类目爆款文包（多Agent复核）</option>
+              <option value="xhs_virtual_keywords">小红书高频词分析（Cookie）</option>
             </select>
           </div>
-          <div class="col-md-2">
-            <select class="form-select" name="assignee" title="执行角色">
-              <option value="Lead Agent">Lead Agent（总控/分派）</option>
-              <option value="@backend-integrator">@backend-integrator（后端专家）</option>
-              <option value="@frontend-polisher">@frontend-polisher（前端专家）</option>
-              <option value="@qa-engineer">@qa-engineer（测试专家）</option>
-              <option value="@release-manager">@release-manager（发布专家）</option>
-              <option value="@research-analyst">@research-analyst（调研专家）</option>
-            </select>
-          </div>
-          <div class="col-md-1">
-            <select class="form-select" name="priority"><option>P0</option><option>P1</option><option selected>P2</option><option>P3</option></select>
-          </div>
-          <div class="col-md-3"><input class="form-control" name="description" placeholder="需求说明（建议写验收标准）" /></div>
-        </div>
-        <div class="form-text mt-1">
-          任务类型用于分类统计与筛选；执行角色用于标记责任归属（便于后续按角色追踪进度）。
-        </div>
-        <div class="row g-2 mt-2 border rounded p-2 bg-light-subtle">
-          <div class="col-md-4">
-            <label class="form-label mb-1">业务模板（新手推荐）</label>
-            <select id="template_select" class="form-select form-select-sm">
-              <option value="">请选择模板（可选）</option>
-              <option data-cmd="cd __PROJECT_DIR__ && git pull && pytest -q" data-desc="拉取最新代码并执行后端回归测试">后端回归测试（git pull + pytest）</option>
-              <option data-cmd="cd __PROJECT_DIR__ && npm install && npm run build" data-desc="安装依赖并执行前端构建验证">前端构建验证（npm install + build）</option>
-              <option data-cmd="cd __PROJECT_DIR__ && python3 manage.py migrate" data-desc="执行数据库迁移">数据库迁移（migrate）</option>
-              <option data-cmd="cd __PROJECT_DIR__ && docker compose ps && docker compose logs --tail=80" data-desc="检查容器状态并抓取最近日志">服务巡检（compose 状态+日志）</option>
-              <option data-cmd="cd __PROJECT_DIR__ && python3 scripts/daily_report_wrapper.py" data-desc="执行每日简报脚本">日报任务（Python 脚本）</option>
-              <option data-cmd="cd __PROJECT_DIR__ && python3 scripts/xhs_virtual_keywords.py --keywords '虚拟产品,数字产品,PPT模板,简历模板,教程课程,AI提示词,素材包,资料包' --cookie-file $TASK_INPUT_DIR/xhs_cookies.json --scrolls 4 --auto-related 2 --max-keywords 24 --domain general --strict --min-usable 4 --out-md $TASK_OUTPUT_DIR/xhs_virtual_keywords.md --out-json $TASK_OUTPUT_DIR/xhs_virtual_keywords.json" data-desc="抓取小红书虚拟产品类目相关页面文本并统计高频词（Cookie登录态 + 相关词扩展 + 质量校验）">小红书虚拟产品高频词（自动分析）</option>
-              <option data-cmd="cd __PROJECT_DIR__ && python3 scripts/xhs_novel_multiagent_pipeline.py --keywords '小说推文,小说推荐,网文,言情小说,悬疑小说,完结小说,书荒推荐,番茄小说,爽文小说,推理小说' --cookie-file $TASK_INPUT_DIR/xhs_cookies.json --output-dir $TASK_OUTPUT_DIR --max-rounds 3 --min-usable 8 --min-domain-ratio 0.75 --max-noise-ratio 0.35 --pack-format zip" data-desc="多Agent轮询复核：采集/清洗/复核/文包四阶段，自动重试与质量门控">小说类目爆款文包（多Agent复核）</option>
-            </select>
-          </div>
-          <div class="col-md-5">
-            <label class="form-label mb-1">项目路径（模板变量）</label>
-            <input id="project_dir" class="form-control form-control-sm" value="{{ g.workdir }}" placeholder="例如 /root/your-project" />
-          </div>
-          <div class="col-md-3 d-grid">
-            <label class="form-label mb-1">快速操作</label>
-            <button type="button" class="btn btn-outline-primary btn-sm" onclick="fillTemplateToCommand()">一键填充到命令框</button>
-          </div>
-          <div class="col-12">
-            <div class="form-text">先选模板，再填项目路径，点“一键填充”。不懂命令时优先用这个方式。<br>若使用“小红书高频词”模板，请在下方附件上传 <code>xhs_cookies.json</code>（登录态 Cookie）。</div>
+          <div class="col-md-9">
+            <label class="form-label">任务标题（可选）</label>
+            <input class="form-control" name="title" placeholder="可不填，系统会从任务描述自动提取" />
           </div>
         </div>
 
-        <div class="row g-2 mt-2">
-          <div class="col-12">
-            <label class="form-label mb-1">高级模式：自定义命令（懂命令时再填）</label>
-            <input id="command_input" class="form-control" name="command" placeholder="留空=演示任务流程（不会执行真实业务）" />
-            <div class="form-text">
-              示例：<code>cd /root/your-project && pytest -q</code> ｜ <code>cd /root/your-project && npm run build</code>。
-              若你是新手，建议先使用上面的“业务模板”自动生成命令。
-              <br>每个任务会有独立目录：<code>{{ g.artifact_root }}/task_任务ID/</code>，可在任务详情页直接下载对应文件。
-            </div>
+        <div class="mt-2">
+          <label class="form-label">任务描述（必填，支持大段口语化描述）</label>
+          <textarea class="form-control" name="task_brief" rows="5" placeholder="例如：请帮我爬取小说类目关键词，过滤噪声词后做成爆款文包，给出可直接发的小红书标题和开头文案。" required></textarea>
+        </div>
+
+        <div class="row g-2 mt-1">
+          <div class="col-md-8">
+            <label class="form-label">期望交付（可选）</label>
+            <input class="form-control" name="delivery_expectation" placeholder="例如：需要zip包+关键词报告+标题模板+开头模板" />
           </div>
-          <div class="col-12">
-            <label class="form-label mb-1">上传附件（可选）</label>
+          <div class="col-md-4">
+            <label class="form-label">附件上传（可选）</label>
             <input type="file" class="form-control" name="attachments" multiple>
-            <div class="form-text">可上传需求文档、配置文件、样例数据。创建任务后会自动归档到该任务的 input 目录。</div>
           </div>
         </div>
+
+        <details class="mt-3 border rounded p-2">
+          <summary><b>高级设置（可选）</b>：默认不需要改</summary>
+          <div class="row g-2 mt-2">
+            <div class="col-md-3">
+              <label class="form-label">任务类型</label>
+              <select class="form-select" name="task_type" title="任务类型">
+                <option value="general" selected>general（通用任务）</option>
+                <option value="backend">backend（后端接口开发）</option>
+                <option value="frontend">frontend（前端页面开发）</option>
+                <option value="qa">qa（测试与回归）</option>
+                <option value="release">release（发布部署）</option>
+                <option value="research">research（技术调研）</option>
+                <option value="db">db（数据库与迁移）</option>
+                <option value="ops">ops（运维与环境）</option>
+                <option value="debug">debug（故障排查）</option>
+                <option value="docs">docs（文档整理）</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">执行角色</label>
+              <select class="form-select" name="assignee" title="执行角色">
+                <option value="Lead Agent">Lead Agent（总控/分派）</option>
+                <option value="@backend-integrator">@backend-integrator（后端专家）</option>
+                <option value="@frontend-polisher">@frontend-polisher（前端专家）</option>
+                <option value="@qa-engineer">@qa-engineer（测试专家）</option>
+                <option value="@release-manager">@release-manager（发布专家）</option>
+                <option value="@research-analyst">@research-analyst（调研专家）</option>
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">优先级</label>
+              <select class="form-select" name="priority"><option>P0</option><option>P1</option><option selected>P2</option><option>P3</option></select>
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">项目路径（模板命令用）</label>
+              <input id="project_dir" class="form-control" name="project_dir" value="{{ g.workdir }}" placeholder="例如 /opt/agent-team-console" />
+            </div>
+          </div>
+
+          <div class="mt-2">
+            <label class="form-label">补充说明</label>
+            <input class="form-control" name="description" placeholder="补充限制条件、验收标准、风险说明等" />
+          </div>
+
+          <div class="mt-2">
+            <label class="form-label">高级模式：自定义命令（懂命令再填）</label>
+            <input id="command_input" class="form-control" name="command" placeholder="留空=按任务模板自动生成命令；通用口语任务留空则进入演示流程" />
+          </div>
+        </details>
+
+        <div class="form-text mt-2">提示：如果模板需要登录态（如小红书），请上传 <code>xhs_cookies.json</code> 到当前任务附件。</div>
         <button class="btn btn-primary mt-2">创建任务</button>
       </form>
     </div>
@@ -201,23 +206,24 @@ function toggleAutoRefresh() {
   }
 }
 
-function fillTemplateToCommand() {
-  const sel = document.getElementById('template_select');
-  const pathInput = document.getElementById('project_dir');
+function onWorkflowChange() {
+  const wf = document.getElementById('workflow_template');
   const cmdInput = document.getElementById('command_input');
-  const descInput = document.querySelector('input[name="description"]');
-  if (!sel || !cmdInput) return;
-  const opt = sel.options[sel.selectedIndex];
-  const raw = opt?.getAttribute('data-cmd');
-  const desc = opt?.getAttribute('data-desc');
-  if (!raw) {
-    alert('请先选择一个业务模板');
-    return;
-  }
-  const projectDir = (pathInput?.value || '{{ g.workdir }}').trim();
-  cmdInput.value = raw.split('__PROJECT_DIR__').join(projectDir);
-  if (descInput && !descInput.value && desc) {
-    descInput.value = desc;
+  const expectation = document.querySelector('input[name="delivery_expectation"]');
+  if (!wf || !cmdInput) return;
+
+  if (wf.value === 'novel_multiagent') {
+    cmdInput.placeholder = '留空即可：系统会自动生成小说多Agent流水线命令';
+    if (expectation && !expectation.value) {
+      expectation.value = '需要关键词报告、爆款标题模板、开头模板、压缩包交付';
+    }
+  } else if (wf.value === 'xhs_virtual_keywords') {
+    cmdInput.placeholder = '留空即可：系统会自动生成小红书关键词分析命令';
+    if (expectation && !expectation.value) {
+      expectation.value = '需要高频词报告（md/json）和可下载产物';
+    }
+  } else {
+    cmdInput.placeholder = '留空=通用口语任务演示流程；如需真实执行可填自定义命令';
   }
   formDirty = true;
 }
@@ -228,6 +234,8 @@ function fillTemplateToCommand() {
     el.addEventListener('input', setDirty);
     el.addEventListener('change', setDirty);
   });
+
+  onWorkflowChange();
 
   setInterval(() => {
     if (!autoRefreshEnabled) return;
