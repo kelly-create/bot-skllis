@@ -1338,6 +1338,11 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
         verifier_mode = is_verifier_stage(stage, role_code)
         dispatch_stage = ("分发" in stage) or (stage_idx == 0 and any(k in stage for k in ["评估", "拆解", "规划"]))
         lead_dispatch_mode = bool(dispatch_stage)
+        lead_acceptance_mode = (
+            role_code == "Lead Agent"
+            and (not lead_dispatch_mode)
+            and any(k in stage for k in ["联合交付", "验收", "交付"])
+        )
         if verifier_mode:
             stage_instruction = (
                 "你只负责当前复核阶段，不负责开发实现。请严格依据任务要求判定是否通过。"
@@ -1354,6 +1359,16 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 '{"assignments":[{"stage":"前端实现","role":"frontend"},{"stage":"后端实现","role":"backend"}],"active_stages":["前端实现","后端实现","复核","联合交付"],"skip_stages":[]}'
                 "。stage 必须是现有阶段名，role 必须是可用角色 code。"
                 "若某阶段本轮不需要执行，请明确写入 skip_stages。"
+            )
+        elif lead_acceptance_mode:
+            stage_instruction = (
+                "你是Lead最终验收阶段：必须对前序执行与复核结果做最终裁决。"
+                "如通过，请返回 JSON："
+                '{"decision":"PASS","reason":"...","issues":[],"send_back_role":"","rework_instructions":""}'
+                "。"
+                "如不通过，必须返回 JSON："
+                '{"decision":"FAIL","reason":"...","issues":["..."],"send_back_role":"frontend 或 backend","rework_instructions":"明确可执行的修改要求"}'
+                "。FAIL 时必须给出可执行的打回意见。"
             )
         else:
             stage_instruction = (
@@ -1477,7 +1492,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 append_log(task_id, "[Lead Agent] 未解析到有效动态分发JSON，沿用工作流默认分配")
 
         # 每个执行角色完成后都做阶段质控（由 reviewer 复核）
-        if (not verifier_mode) and (not lead_dispatch_mode):
+        if (not verifier_mode) and (not lead_dispatch_mode) and (not lead_acceptance_mode):
             auto_fail_reason = ""
             if tool_events and all(int(e.get("rc", 1)) != 0 for e in tool_events):
                 auto_fail_reason = "执行了工具命令但全部失败（rc非0），请先修复命令/环境后再提交。"
@@ -1584,6 +1599,39 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 append_log(
                     task_id,
                     f"[Lead Agent] 复核未通过，打回到阶段{target_idx+1}（{stages[target_idx]}），返工轮次={rework_round}/{max_rework_rounds}",
+                )
+                previous_output = output
+                audit["stages"].append(stage_audit)
+                stage_idx = target_idx
+                continue
+
+        # Lead 最终验收阶段：Lead 也有打回权限
+        if lead_acceptance_mode:
+            decision = parse_verifier_feedback(output)
+            stage_audit["leadAcceptance"] = decision
+            dec = decision.get("decision", "UNKNOWN")
+            append_log(task_id, f"[Lead Agent] 验收结论：{dec} | reason={decision.get('reason','')[:120]}")
+
+            if dec != "PASS":
+                if rework_round >= max_rework_rounds:
+                    stage_audit["terminatedByMaxRework"] = True
+                    audit["stages"].append(stage_audit)
+                    audit["reworkRoundsUsed"] = rework_round
+                    raise RuntimeError(f"Lead验收未通过，已达最大返工轮次 {max_rework_rounds}，任务终止")
+
+                target_role = (decision.get("send_back_role") or "").strip()
+                target_idx = find_stage_index_by_role(stages, stage_roles, target_role, stage_idx, fallback_idx=max(0, stage_idx - 1))
+                rework_round += 1
+                audit["reworkRoundsUsed"] = rework_round
+                handoff_note = (
+                    f"Lead验收不通过（第{rework_round}轮返工）。"
+                    f"原因：{decision.get('reason','')}。"
+                    f"问题：{'；'.join(decision.get('issues') or [])}。"
+                    f"修改要求：{decision.get('rework_instructions','请根据Lead验收意见修改后提交。')}"
+                )
+                append_log(
+                    task_id,
+                    f"[Lead Agent] 验收未通过，打回到阶段{target_idx+1}（{stages[target_idx]}），返工轮次={rework_round}/{max_rework_rounds}",
                 )
                 previous_output = output
                 audit["stages"].append(stage_audit)

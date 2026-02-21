@@ -249,7 +249,7 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ 小说流水线已补“最近7天采样硬门槛”（`min_recent_7d`）并修复“strict未通过仍返回rc=0”漏洞；默认任务命令已强制 `--min-recent-7d 7`。
 - ✅ 每次重跑已增加 `run_id` 日志前缀 + 自动清理旧输出/角色会话；停止任务改为进程组级终止，减少残留子进程导致的结果混杂。
 - ✅ 小红书采集已新增“频控识别+反拦截自适应轮次”（降速、关键词级冷却重试、禁扩词切换），避免被拦截后机械重跑。
-- ✅ Agent Team 已收敛为四角色精简架构：`Lead Agent(gpt-5.3-codex)` + `frontend(MiniMax-M2.5)` + `backend(gpt-5.3-codex)` + `reviewer(gpt-5.3-codex)`；仅保留 `intelligent_dual` 工作流（Lead评估调度，前后端执行，reviewer复核打回）。
+- ✅ Agent Team 已收敛为四角色精简架构：`Lead Agent(gpt-5.3-codex)` + `frontend(MiniMax-M2.5)` + `backend(gpt-5.3-codex)` + `reviewer(gpt-5.3-codex)`；仅保留 `intelligent_dual` 工作流（Lead评估调度，前后端执行，reviewer复核打回，Lead最终验收也可打回）。
 - ✅ 控制台完成“去臃肿”连续改造：主页新增快速筛选、角色/工作流/提示默认折叠，并重排为 chatgpt 风格的“轻侧栏+主工作区”；任务详情支持按运行ID与异常过滤日志。
 - ✅ 主页侧栏已升级为深色风格，任务概览支持点击即筛选，补齐“概览不可点”的交互短板。
 - ✅ 已完成整页视觉协调修复（统一配色Token、顶栏与侧栏同层级、交互反馈一致），减少“拼接感”。
