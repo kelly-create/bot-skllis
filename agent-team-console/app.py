@@ -1166,10 +1166,15 @@ def find_stage_index_by_role(stages: list, stage_roles: dict, role_code: str, be
     return fallback_idx
 
 
-def parse_dispatch_assignments(text: str, allowed_stages: list, enabled_role_codes: set) -> dict:
+def parse_dispatch_plan(text: str, allowed_stages: list, enabled_role_codes: set) -> dict:
     raw = (text or "").strip()
+    out = {
+        "assignments": {},
+        "active_stages": None,  # None=不改，list=改写
+        "skipped_stages": [],
+    }
     if not raw:
-        return {}
+        return out
 
     payload = None
     m = re.search(r"\{[\s\S]*\}", raw)
@@ -1179,24 +1184,38 @@ def parse_dispatch_assignments(text: str, allowed_stages: list, enabled_role_cod
         except Exception:
             payload = None
 
-    out = {}
-    if isinstance(payload, dict):
-        assignments = payload.get("assignments") or payload.get("dispatch") or []
-        if isinstance(assignments, list):
-            for item in assignments:
-                if not isinstance(item, dict):
-                    continue
-                stage = str(item.get("stage") or "").strip()
-                role = str(item.get("role") or item.get("assignee") or "").strip()
-                if stage in allowed_stages and role in enabled_role_codes:
-                    out[stage] = role
-        # 兼容直接 map
-        if not out:
-            for k, v in payload.items():
-                ks = str(k).strip()
-                vs = str(v).strip() if isinstance(v, (str, int, float)) else ""
-                if ks in allowed_stages and vs in enabled_role_codes:
-                    out[ks] = vs
+    if not isinstance(payload, dict):
+        return out
+
+    assignments = payload.get("assignments") or payload.get("dispatch") or []
+    if isinstance(assignments, list):
+        for item in assignments:
+            if not isinstance(item, dict):
+                continue
+            stage = str(item.get("stage") or "").strip()
+            role = str(item.get("role") or item.get("assignee") or "").strip()
+            if stage in allowed_stages and role in enabled_role_codes:
+                out["assignments"][stage] = role
+
+    # 兼容直接 map
+    if not out["assignments"]:
+        for k, v in payload.items():
+            ks = str(k).strip()
+            vs = str(v).strip() if isinstance(v, (str, int, float)) else ""
+            if ks in allowed_stages and vs in enabled_role_codes:
+                out["assignments"][ks] = vs
+
+    active_raw = payload.get("active_stages")
+    if isinstance(active_raw, list):
+        active = [str(x).strip() for x in active_raw if str(x).strip() in allowed_stages]
+        out["active_stages"] = active
+
+    skip_raw = payload.get("skip_stages") or payload.get("skipped_stages")
+    if isinstance(skip_raw, list):
+        skips = [str(x).strip() for x in skip_raw if str(x).strip() in allowed_stages]
+        out["skipped_stages"] = skips
+        if out["active_stages"] is None:
+            out["active_stages"] = [s for s in allowed_stages if s not in skips]
 
     return out
 
@@ -1220,6 +1239,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
     stage_retry_counts = {s: 0 for s in stages}
 
     enabled_role_codes = {r["code"] for r in get_roles(enabled_only=True)}
+    active_stage_set = set(stages)
 
     audit = {
         "taskId": task_id,
@@ -1239,6 +1259,25 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
 
         ensure_not_stopped(task_id)
         stage = stages[stage_idx]
+
+        # 动态分发后可跳过非必要阶段
+        if (stage_idx > 0) and (stage not in active_stage_set):
+            append_log(task_id, f"[Lead Agent] 跳过阶段{stage_idx+1}：{stage}（本轮未分配）")
+            audit["stages"].append(
+                {
+                    "executionNo": None,
+                    "index": stage_idx + 1,
+                    "stage": stage,
+                    "role": stage_roles.get(stage) or "-",
+                    "model": "-",
+                    "status": "SKIPPED",
+                    "reason": "动态分发未纳入本轮执行",
+                    "finishedAt": now_str(),
+                }
+            )
+            stage_idx += 1
+            continue
+
         role_code = stage_roles.get(stage) or (wf["default_assignee"] or "") or (task["assignee"] or "Lead Agent")
         role = get_role_by_code(role_code)
         if not role:
@@ -1265,12 +1304,13 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             )
         elif lead_dispatch_mode:
             stage_instruction = (
-                "你是总控分发阶段：先接收需求，再按后续角色分发任务。"
+                "你是总控分发阶段：先评估需求复杂度与风险，再按后续角色分发任务。"
                 "请输出“分发清单”，至少包含：角色、该角色目标、输入、输出、验收标准。"
-                "不要替执行角色完成实现，只做拆解和分发。"
-                "并在结尾附上 JSON（assignments）用于动态分发，例如："
-                '{"assignments":[{"stage":"开发","role":"@developer"},{"stage":"测试","role":"@tester"}]}'
+                "不要替执行角色完成实现，只做评估、拆解和分发。"
+                "并在结尾附上 JSON（assignments + active_stages）用于动态分发，例如："
+                '{"assignments":[{"stage":"开发","role":"@developer"},{"stage":"测试","role":"@tester"}],"active_stages":["开发","测试","验证","交付"],"skip_stages":["文包"]}'
                 "。stage 必须是现有阶段名，role 必须是可用角色 code。"
+                "若某阶段本轮不需要执行，请明确写入 skip_stages。"
             )
         else:
             stage_instruction = (
@@ -1366,15 +1406,28 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             "finishedAt": now_str(),
         }
 
-        # 动态分发：Lead 在“需求接收与分发”阶段可动态改写后续阶段角色
+        # 动态分发：Lead 在“需求接收与分发”阶段可动态改写后续阶段角色 + 阶段激活计划
         if lead_dispatch_mode:
-            dynamic = parse_dispatch_assignments(output, stages[stage_idx + 1 :], enabled_role_codes)
+            allowed_following_stages = stages[stage_idx + 1 :]
+            plan = parse_dispatch_plan(output, allowed_following_stages, enabled_role_codes)
+            dynamic = plan.get("assignments") or {}
             if dynamic:
                 stage_roles.update(dynamic)
                 audit["dynamicAssignments"].update(dynamic)
                 stage_audit["dynamicAssignments"] = dynamic
                 append_log(task_id, f"[Lead Agent] 动态分发生效：{json.dumps(dynamic, ensure_ascii=False)}")
-            else:
+
+            active_stages = plan.get("active_stages")
+            if isinstance(active_stages, list):
+                # 守住末端质控/交付类阶段，避免被误跳过
+                safety_stages = [s for s in allowed_following_stages if ("验证" in s or "复核" in s or "交付" in s)]
+                active_final = sorted(set(active_stages + safety_stages))
+                active_stage_set = {stages[0], *active_final}
+                skipped = [s for s in allowed_following_stages if s not in active_stage_set]
+                stage_audit["activeStages"] = active_final
+                stage_audit["skippedStages"] = skipped
+                append_log(task_id, f"[Lead Agent] 阶段执行计划：active={active_final} | skipped={skipped}")
+            elif not dynamic:
                 append_log(task_id, "[Lead Agent] 未解析到有效动态分发JSON，沿用工作流默认分配")
 
         # 每个执行角色完成后都做阶段质控（由 @verifier 复核）
