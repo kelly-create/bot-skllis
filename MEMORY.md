@@ -252,6 +252,7 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ Agent Team 已重构为双主角色智能架构：`@frontend(MiniMax-M2.5)` + `@backend(gpt-5.3-codex)`，默认工作流切换为 `intelligent_dual`，支持首阶段评估后动态分配与跳过非必要阶段。
 - ✅ 控制台完成“去臃肿”连续改造：主页新增快速筛选、角色/工作流/提示默认折叠，并重排为 chatgpt 风格的“轻侧栏+主工作区”；任务详情支持按运行ID与异常过滤日志。
 - ✅ 主页侧栏已升级为深色风格，任务概览支持点击即筛选，补齐“概览不可点”的交互短板。
+- ✅ 已完成整页视觉协调修复（统一配色Token、顶栏与侧栏同层级、交互反馈一致），减少“拼接感”。
 - ✅ 已补充“小说爆款文包”生成脚本（关键词报告 + 标题/开头模板 + 打包下载）。
 - ✅ 已上线“小说类目多Agent复核流水线”（Collector/Cleaner/Reviewer/Packager）。
 - ✅ 多Agent产物已支持中文文件名与 zip/7z 可选压缩（默认 zip，7z 不可用时自动回退 zip）。
