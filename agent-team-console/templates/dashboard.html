@@ -256,7 +256,7 @@
       <div class="panel" id="newTaskPanel">
         <div class="panel-head d-flex justify-content-between align-items-center">
           <span>新建任务</span>
-          <span class="tiny muted">智能双角色：后端先评估，再调度前端/后端</span>
+          <span class="tiny muted">智能双角色：Lead先评估，再调度前端/后端</span>
         </div>
         <div class="panel-body">
           <form method="post" action="{{ url_for('create_task') }}" enctype="multipart/form-data">
@@ -308,7 +308,7 @@
                   <select class="form-select form-select-sm" name="assignee">
                     {% for r in roles %}
                       {% if r.enabled == 1 %}
-                      <option value="{{ r.code }}" {% if r.code == '@backend' %}selected{% endif %}>{{ r.name }}（{{ r.code }}）</option>
+                      <option value="{{ r.code }}" {% if r.code == 'Lead Agent' %}selected{% endif %}>{{ r.name }}（{{ r.code }}）</option>
                       {% endif %}
                     {% endfor %}
                   </select>
@@ -453,7 +453,7 @@ function onWorkflowChange() {
   if (defTaskType && taskType) taskType.value = defTaskType;
 
   if (wf.value === 'intelligent_dual') {
-    cmdInput.placeholder = '留空=由后端角色先评估，再按需调度前端/后端执行';
+    cmdInput.placeholder = '留空=由Lead角色先评估，再按需调度前端/后端执行';
     if (expectation && !expectation.value) expectation.value = '期望：明确评估结论、必要执行产物、最终交付摘要';
   } else if (wf.value === 'novel_multiagent') {
     cmdInput.placeholder = '留空即可：系统会自动生成小说多Agent流水线命令';

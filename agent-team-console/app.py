@@ -540,11 +540,6 @@ def init_db():
             ("Lead Agent", "Lead Agent", "任务总控与编排", "gpt-5.3-codex"),
             ("@frontend", "前端 Agent", "前端页面、交互、可视化与体验优化", "MiniMax-M2.5"),
             ("@backend", "后端 Agent", "后端业务、数据流、接口与自动化执行", "gpt-5.3-codex"),
-            ("@developer", "开发 Agent", "实现功能、改代码、修复问题", "gpt-5.3-codex"),
-            ("@tester", "测试 Agent", "回归测试、边界验证、复现问题", "gpt-5.3-codex"),
-            ("@verifier", "验证 Agent", "按验收标准做最终核对", "gpt-5.3-codex"),
-            ("@release", "发布 Agent", "发布、回滚、变更审计", "gpt-5.3-codex"),
-            ("@research", "调研 Agent", "信息检索、数据分析、报告沉淀", "gpt-5.3-codex"),
         ]
         for code, name, desc, model in default_roles:
             conn.execute(
@@ -557,15 +552,9 @@ def init_db():
 
         # 默认角色词（system prompt）
         role_prompts = {
-            "Lead Agent": "你是总控角色。负责拆解任务、定义阶段目标、串联各角色输出，最终给出可交付结果与结论。输出要简洁、结构化。",
-            "@frontend": "你是前端角色。负责页面结构、交互流程、可读性和可操作性优化。遇到阻塞要主动提出替代路径并执行。",
-            "@backend": "你是后端角色。负责任务评估、数据/接口/脚本执行与故障排查。遇到反爬或失败时必须先诊断原因，再切换执行策略。",
-            "@developer": "你是开发角色。聚焦实现方案、关键步骤、代码/流程改动点。不要泛泛而谈，给出可执行内容。",
-            "@tester": "你是测试角色。基于开发输出设计验证点、边界用例、回归清单，并标记风险与缺陷。",
-            "@verifier": "你是验证角色。按任务目标与交付标准做最终核对，明确通过/不通过和理由。",
-            "@release": "你是发布交付角色。负责整理最终交付、发布步骤、回滚要点与风险提示。",
-            "@research": "你是调研分析角色。负责信息提炼、结构化总结、关键证据和结论。",
-            "@pm": "你是产品经理角色。负责需求澄清、验收标准、优先级与范围边界。",
+            "Lead Agent": "你是总控角色。负责评估需求、制定执行计划、调度前后端角色、汇总最终交付。遇到阻塞时要先诊断再调整策略。",
+            "@frontend": "你是前端角色。负责页面结构、交互流程、可视化与可读性优化，按验收标准交付前端结果。",
+            "@backend": "你是后端角色。负责后端业务、数据/接口/脚本执行与故障排查。遇到反爬或失败时必须先诊断原因，再切换策略。",
         }
         for role_code, prompt in role_prompts.items():
             conn.execute(
@@ -578,7 +567,16 @@ def init_db():
                 (prompt, now_str(), role_code),
             )
 
-        # 双核心角色默认模型（允许在角色中心手动覆盖）
+        # 三核心角色默认模型（允许在角色中心手动覆盖）
+        conn.execute(
+            """
+            UPDATE roles
+            SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'gpt-5.3-codex' ELSE default_model END,
+                updated_at=?
+            WHERE code='Lead Agent'
+            """,
+            (now_str(),),
+        )
         conn.execute(
             """
             UPDATE roles
@@ -618,61 +616,16 @@ def init_db():
                 (ROLE_DEFAULT_API_KEY, now_str()),
             )
 
-        # 默认全局工作流模板（可复用，不绑定单一业务）
+        # 默认工作流（当前仅保留智能双角色）
         default_workflows = [
             (
                 "intelligent_dual",
-                "智能双角色（前端+后端）",
-                "后端先评估并分配执行计划，前后端按需协作并独立调用工具执行",
+                "智能双角色（前端+后端+Lead）",
+                "Lead 先评估并分配执行计划，前后端按需协作并独立调用工具执行",
                 json.dumps(["需求评估与分配", "前端实现", "后端实现", "联合交付"], ensure_ascii=False),
                 "general",
-                "@backend",
-                "",
-            ),
-            (
-                "custom_brief",
-                "通用口语任务",
-                "口语化描述 + 附件输入，适配任意任务",
-                json.dumps(["需求接收与分发", "执行", "复核", "交付"], ensure_ascii=False),
-                "general",
                 "Lead Agent",
                 "",
-            ),
-            (
-                "dev_test_verify",
-                "开发→测试→验证",
-                "面向代码任务的标准闭环",
-                json.dumps(["需求接收与分发", "开发", "测试", "验证", "交付"], ensure_ascii=False),
-                "backend",
-                "Lead Agent",
-                "",
-            ),
-            (
-                "research_report",
-                "调研→提炼→交付",
-                "面向信息分析与内容生产任务",
-                json.dumps(["需求接收与分发", "调研", "提炼", "复核", "交付"], ensure_ascii=False),
-                "research",
-                "Lead Agent",
-                "",
-            ),
-            (
-                "novel_multiagent",
-                "小说类目爆款文包（多Agent）",
-                "采集→清洗→复核→文包",
-                json.dumps(["需求接收与分发", "采集", "清洗", "复核", "文包"], ensure_ascii=False),
-                "research",
-                "Lead Agent",
-                "",
-            ),
-            (
-                "xhs_virtual_keywords",
-                "小红书高频词分析",
-                "关键词采集与高频词报告",
-                json.dumps(["需求接收与分发", "采集", "清洗", "复核", "交付"], ensure_ascii=False),
-                "research",
-                "Lead Agent",
-                "cd __PROJECT_DIR__ && python3 scripts/xhs_virtual_keywords.py --keywords '虚拟产品,数字产品,PPT模板,简历模板,教程课程,AI提示词,素材包,资料包' --cookie-file $TASK_INPUT_DIR/xhs_cookies.json --scrolls 4 --auto-related 2 --max-keywords 24 --domain general --strict --min-usable 4 --out-md $TASK_OUTPUT_DIR/xhs_virtual_keywords.md --out-json $TASK_OUTPUT_DIR/xhs_virtual_keywords.json",
             ),
         ]
         for code, name, desc, stages, task_type, assignee, cmd in default_workflows:
@@ -686,12 +639,7 @@ def init_db():
             )
 
         stage_role_defaults = {
-            "intelligent_dual": {"需求评估与分配": "@backend", "前端实现": "@frontend", "后端实现": "@backend", "联合交付": "@frontend"},
-            "custom_brief": {"需求接收与分发": "Lead Agent", "执行": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
-            "dev_test_verify": {"需求接收与分发": "Lead Agent", "开发": "@developer", "测试": "@tester", "验证": "@verifier", "交付": "@release"},
-            "research_report": {"需求接收与分发": "Lead Agent", "调研": "@research", "提炼": "@research", "复核": "@verifier", "交付": "Lead Agent"},
-            "novel_multiagent": {"需求接收与分发": "Lead Agent", "采集": "@research", "清洗": "@developer", "复核": "@verifier", "文包": "@release"},
-            "xhs_virtual_keywords": {"需求接收与分发": "Lead Agent", "采集": "@research", "清洗": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
+            "intelligent_dual": {"需求评估与分配": "Lead Agent", "前端实现": "@frontend", "后端实现": "@backend", "联合交付": "Lead Agent"},
         }
         for wf_code, mapping in stage_role_defaults.items():
             conn.execute(
@@ -706,19 +654,9 @@ def init_db():
 
         workflow_stage_defaults = {
             "intelligent_dual": ["需求评估与分配", "前端实现", "后端实现", "联合交付"],
-            "custom_brief": ["需求接收与分发", "执行", "复核", "交付"],
-            "dev_test_verify": ["需求接收与分发", "开发", "测试", "验证", "交付"],
-            "research_report": ["需求接收与分发", "调研", "提炼", "复核", "交付"],
-            "novel_multiagent": ["需求接收与分发", "采集", "清洗", "复核", "文包"],
-            "xhs_virtual_keywords": ["需求接收与分发", "采集", "清洗", "复核", "交付"],
         }
         workflow_assignee_defaults = {
-            "intelligent_dual": "@backend",
-            "custom_brief": "Lead Agent",
-            "dev_test_verify": "Lead Agent",
-            "research_report": "Lead Agent",
-            "novel_multiagent": "Lead Agent",
-            "xhs_virtual_keywords": "Lead Agent",
+            "intelligent_dual": "Lead Agent",
         }
         for wf_code, stages in workflow_stage_defaults.items():
             conn.execute(
@@ -2169,7 +2107,7 @@ def create_task():
     wf = get_workflow_by_code(workflow_template)
 
     task_type = (request.form.get("task_type") or "general").strip()
-    assignee = (request.form.get("assignee") or "@backend").strip()
+    assignee = (request.form.get("assignee") or "Lead Agent").strip()
     priority = (request.form.get("priority") or "P2").strip()
 
     # 若未手工指定，优先套用工作流默认角色/类型
