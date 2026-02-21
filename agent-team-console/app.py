@@ -234,46 +234,126 @@ def classify_output_files(output_files):
     return {"packs": packs, "reports": reports, "audits": audits, "others": others}
 
 
+def _latest_run_id_from_logs(logs):
+    for row in reversed(logs):
+        line = (row["line"] or "")
+        m = re.search(r"\[run:([^\]]+)\]", line)
+        if m:
+            return m.group(1)
+    return ""
+
+
+def _strip_log_meta(line: str) -> str:
+    s = (line or "").strip()
+    # 仅剥离前缀元信息（时间/run/角色），保留正文
+    for _ in range(4):
+        ns = re.sub(r"^\[[^\]]+\]\s*", "", s)
+        if ns == s:
+            break
+        s = ns
+    return s.strip()
+
+
+def _short_line(line: str, max_len: int = 220) -> str:
+    s = _strip_log_meta(line)
+    if "工具执行 round=" in s:
+        m = re.search(r"(工具执行\s+round=\d+/\d+\s+rc=\d+\s+timedOut=(?:True|False))", s)
+        if m:
+            s = m.group(1)
+    if len(s) > max_len:
+        s = s[: max_len - 1] + "…"
+    return s
+
+
 def extract_failure_diagnosis(logs):
     reason = ""
     evidences = []
+    latest_run_id = _latest_run_id_from_logs(logs)
 
-    for row in reversed(logs):
+    scoped_logs = logs
+    if latest_run_id:
+        scoped = [r for r in logs if f"[run:{latest_run_id}]" in (r["line"] or "")]
+        if scoped:
+            scoped_logs = scoped
+
+    for row in reversed(scoped_logs):
         line = (row["line"] or "").strip()
         if not line:
             continue
-
         if ("多Agent流程失败：" in line) or ("任务失败：" in line) or ("执行异常：" in line):
             reason = line
             break
 
     if not reason:
-        for row in reversed(logs):
+        for row in reversed(scoped_logs):
             line = (row["line"] or "").strip()
             if any(k in line for k in ["FAIL", "失败", "异常", "打回"]):
                 reason = line
                 break
 
-    for row in reversed(logs):
+    for row in reversed(scoped_logs):
         line = (row["line"] or "").strip()
-        if any(k in line for k in ["FAIL", "失败", "异常", "打回", "质控", "复核"]):
-            evidences.append(line)
-        if len(evidences) >= 3:
+        if any(
+            k in line
+            for k in [
+                "多Agent流程失败",
+                "阶段质控结论：FAIL",
+                "复核结论：FAIL",
+                "打回当前阶段重做",
+                "工具执行 round=",
+                "模型请求失败",
+                "未配置 api",
+            ]
+        ):
+            evidences.append(_short_line(line))
+        if len(evidences) >= 4:
             break
 
+    # 去重但保序
+    seen = set()
+    dedup_evidences = []
+    for e in evidences:
+        if e in seen:
+            continue
+        seen.add(e)
+        dedup_evidences.append(e)
+    evidences = dedup_evidences
+
+    reason_plain = _strip_log_meta(reason)
+    friendly_reason = reason_plain
+
+    m_retry = re.search(r"阶段\s+(.+?)\s+质控未通过，且已达本阶段最大重试\s*(\d+)", reason_plain)
+    m_rework = re.search(r"最大返工轮次\s*(\d+)", reason_plain)
+    m_http = re.search(r"HTTP\s*(\d{3})", reason_plain)
+
+    if m_retry:
+        stage, n = m_retry.group(1), m_retry.group(2)
+        friendly_reason = f"{stage}阶段连续质控不通过，已达到最大重试 {n} 次，任务终止。"
+    elif m_rework:
+        friendly_reason = f"复核/返工达到上限（{m_rework.group(1)} 轮），任务终止。"
+    elif "未配置 api_base" in reason_plain or "未配置 api_key" in reason_plain:
+        friendly_reason = "角色配置不完整（缺少 API Base 或 API Key），任务无法继续。"
+    elif m_http and "模型请求失败" in reason_plain:
+        friendly_reason = f"模型调用失败（HTTP {m_http.group(1)}），流程中断。"
+    elif "质控未通过" in reason_plain:
+        friendly_reason = "阶段质控不通过，当前产物未达到验收标准。"
+
     suggestion = "请根据失败原因修正后重置任务；若不确定，可把“失败原因+最近3条证据”发给我，我会给出具体修复步骤。"
-    combo = reason + "\n" + "\n".join(evidences)
+    combo = reason_plain + "\n" + "\n".join(evidences)
     if "未配置 api_base" in combo or "未配置 api_key" in combo:
         suggestion = "先到角色中心补齐该角色的 API Base / API Key / 模型，再重置任务。"
+    elif "质控未通过" in combo and "最大重试" in combo:
+        suggestion = "这是“阶段质控不通过 + 重试耗尽”。先明确该阶段的必交付文件（例如统计JSON/最终报告），要求角色一次性产出并附关键数字，再重置任务。"
     elif "质控未通过" in combo:
         suggestion = "当前阶段产出不满足验收标准。请按质控原因补齐“可验收结果”（例如实际数据/文件/结论），再重置任务。"
     elif "最大重试" in combo or "最大返工轮次" in combo:
         suggestion = "已触发重试上限。建议先优化当前阶段提示词或放宽验收条件，再重置任务；必要时提高重试上限。"
     elif "HTTP" in combo or "模型请求失败" in combo:
-        suggestion = "模型/API调用失败。请检查角色 API 可用性、密钥有效性、模型名是否正确。"
+        suggestion = "模型/API调用失败。请检查角色 API 可用性、密钥有效性、模型名是否正确；网络波动时可直接重试。"
 
     return {
-        "reason": reason or "未定位到明确失败主因（请查看日志）",
+        "run_id": latest_run_id,
+        "reason": friendly_reason or "未定位到明确失败主因（请查看日志）",
         "evidences": evidences,
         "suggestion": suggestion,
     }

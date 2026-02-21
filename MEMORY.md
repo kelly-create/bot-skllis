@@ -262,4 +262,5 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ 已上线“小说类目多Agent复核流水线”（Collector/Cleaner/Reviewer/Packager）。
 - ✅ 多Agent产物已支持中文文件名与 zip/7z 可选压缩（默认 zip，7z 不可用时自动回退 zip）。
 - ✅ 已修复模板默认路径与部署路径不一致导致的 `rc=1`（默认项目路径改为运行时工作目录）。
+- ✅ 失败诊断已升级为“最新run聚焦 + 根因人话化 + 证据去噪 + 建议定向化”，并在任务详情显示运行ID，减少“看不懂为何失败”。
 - ✅ 代码已同步 GitHub（提交 `df2deff`）。

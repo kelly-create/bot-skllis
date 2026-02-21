@@ -166,6 +166,9 @@
 
             {% if delivery.failure %}
             <div class="alert alert-danger mt-2 mb-2 py-2">
+              {% if delivery.failure.run_id %}
+              <div class="tiny muted mb-1">运行ID：<code>{{ delivery.failure.run_id }}</code></div>
+              {% endif %}
               <div><b>失败原因：</b>{{ delivery.failure.reason }}</div>
               {% if delivery.failure.evidences and delivery.failure.evidences|length > 0 %}
               <ul class="mb-1 ps-3 tiny">
