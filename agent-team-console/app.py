@@ -538,8 +538,8 @@ def init_db():
         # 默认全局角色（创建一次，后续可在页面维护）
         default_roles = [
             ("Lead Agent", "Lead Agent", "任务总控与编排", "gpt-5.3-codex"),
-            ("@frontend", "前端 Agent", "前端页面、交互、可视化与体验优化", "gpt-5.3-codex"),
-            ("@backend", "后端 Agent", "后端业务、数据流、接口与自动化执行", "MiniMax-M2.5"),
+            ("@frontend", "前端 Agent", "前端页面、交互、可视化与体验优化", "MiniMax-M2.5"),
+            ("@backend", "后端 Agent", "后端业务、数据流、接口与自动化执行", "gpt-5.3-codex"),
             ("@developer", "开发 Agent", "实现功能、改代码、修复问题", "gpt-5.3-codex"),
             ("@tester", "测试 Agent", "回归测试、边界验证、复现问题", "gpt-5.3-codex"),
             ("@verifier", "验证 Agent", "按验收标准做最终核对", "gpt-5.3-codex"),
@@ -582,7 +582,7 @@ def init_db():
         conn.execute(
             """
             UPDATE roles
-            SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'gpt-5.3-codex' ELSE default_model END,
+            SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'MiniMax-M2.5' ELSE default_model END,
                 updated_at=?
             WHERE code='@frontend'
             """,
@@ -591,7 +591,7 @@ def init_db():
         conn.execute(
             """
             UPDATE roles
-            SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'MiniMax-M2.5' ELSE default_model END,
+            SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'gpt-5.3-codex' ELSE default_model END,
                 updated_at=?
             WHERE code='@backend'
             """,
@@ -1461,6 +1461,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
         stage_files_after = list_output_file_names(output_dir)
         produced_files = sorted(list(stage_files_after - stage_files_before))
         produced_non_system = [x for x in produced_files if not is_system_generated_output(x)]
+        existing_non_system = [x for x in sorted(stage_files_after) if not is_system_generated_output(x)]
 
         execution_no += 1
         stage_file = os.path.join(
@@ -1485,6 +1486,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             "toolEvents": tool_events,
             "producedFiles": produced_files,
             "producedNonSystemFiles": produced_non_system,
+            "existingNonSystemFiles": existing_non_system,
             "outputFile": os.path.basename(stage_file),
             "outputChars": len(output),
             "finishedAt": now_str(),
@@ -1521,8 +1523,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 auto_fail_reason = "执行了工具命令但全部失败（rc非0），请先修复命令/环境后再提交。"
 
             needs_artifacts = task_requires_real_artifacts(task_text_all)
-            if (not auto_fail_reason) and needs_artifacts and (stage in ["执行", "采集", "开发", "文包", "交付"]) and len(produced_non_system) == 0:
-                auto_fail_reason = "任务要求包含可验收产物（爬取/关键词/文包等），但本阶段未在输出目录产出真实文件。"
+            if (not auto_fail_reason) and needs_artifacts and (stage in ["执行", "采集", "开发", "文包", "交付", "联合交付"]) and len(existing_non_system) == 0:
+                auto_fail_reason = "任务要求包含可验收产物（爬取/关键词/文包等），但当前输出目录无可验收真实文件。"
 
             quality = None
             review_output = ""
@@ -1546,7 +1548,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                         f"任务目标：{sections.get('task') or task['description'] or ''}\n"
                         f"期望交付：{sections.get('delivery') or ''}\n"
                         f"本阶段输出：\n{output}\n\n"
-                        f"本阶段产出文件（非系统生成）：{produced_non_system}\n"
+                        f"本阶段新增产出（非系统生成）：{produced_non_system}\n"
+                        f"当前可验收产物（非系统生成）：{existing_non_system}\n"
                         "请返回 JSON："
                         '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"当前角色code","rework_instructions":"..."}'
                         "。若 FAIL，send_back_role 优先填当前角色。"

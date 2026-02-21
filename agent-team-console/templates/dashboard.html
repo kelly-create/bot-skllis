@@ -91,8 +91,8 @@
     <div class="col-12 col-xxl-8">
       <div class="card soft-card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
-          <span>新建任务（口语化）</span>
-          <span class="summary-chip">支持大段描述 + 附件</span>
+          <span>新建任务（智能双角色）</span>
+          <span class="summary-chip">后端先评估，再按需调度前端/后端</span>
         </div>
         <div class="card-body">
           <form method="post" action="{{ url_for('create_task') }}" enctype="multipart/form-data">
@@ -148,7 +148,7 @@
                   <select class="form-select" name="assignee" title="执行角色">
                     {% for r in roles %}
                       {% if r.enabled == 1 %}
-                      <option value="{{ r.code }}" {% if r.code == 'Lead Agent' %}selected{% endif %}>{{ r.name }}（{{ r.code }}）</option>
+                      <option value="{{ r.code }}" {% if r.code == '@backend' %}selected{% endif %}>{{ r.name }}（{{ r.code }}）</option>
                       {% endif %}
                     {% endfor %}
                   </select>
@@ -282,11 +282,11 @@
           </div>
         </div>
 
-        <div class="card soft-card mb-3">
-          <div class="card-header d-flex justify-content-between align-items-center">
-            <span>全局角色中心</span>
-            <span class="small text-muted">独立会话按角色各自模型/API执行</span>
-          </div>
+        <details class="card soft-card mb-3">
+          <summary class="card-header d-flex justify-content-between align-items-center" style="cursor:pointer; list-style:none;">
+            <span>全局角色中心（高级）</span>
+            <span class="small text-muted">默认收起，避免主界面臃肿</span>
+          </summary>
           <div class="card-body small">
             <div class="table-responsive mb-2">
               <table class="table table-sm align-middle">
@@ -349,10 +349,10 @@
               </form>
             </details>
           </div>
-        </div>
+        </details>
 
-        <div class="card soft-card mb-3">
-          <div class="card-header">工作流模板中心</div>
+        <details class="card soft-card mb-3">
+          <summary class="card-header" style="cursor:pointer; list-style:none;">工作流模板中心（高级）</summary>
           <div class="card-body small">
             <div class="table-responsive mb-2">
               <table class="table table-sm align-middle">
@@ -408,10 +408,10 @@
               </form>
             </details>
           </div>
-        </div>
+        </details>
 
-        <div class="card soft-card">
-          <div class="card-header">操作提示</div>
+        <details class="card soft-card">
+          <summary class="card-header" style="cursor:pointer; list-style:none;">操作提示</summary>
           <div class="card-body small text-muted">
             <ul class="mb-0">
               <li><b>启动</b>：加入执行队列；并发满会自动排队。</li>
@@ -421,7 +421,7 @@
               <li><b>真多Agent提醒</b>：若任务命令为空，会按工作流走角色独立会话；需先在“角色中心”配置每个角色的 API/模型。</li>
             </ul>
           </div>
-        </div>
+        </details>
       </div>
     </div>
   </div>
@@ -462,7 +462,12 @@ function onWorkflowChange() {
     taskType.value = defTaskType;
   }
 
-  if (wf.value === 'novel_multiagent') {
+  if (wf.value === 'intelligent_dual') {
+    cmdInput.placeholder = '留空=由后端角色先评估，再按需调度前端/后端执行';
+    if (expectation && !expectation.value) {
+      expectation.value = '期望：明确评估结论、必要执行产物、最终交付摘要';
+    }
+  } else if (wf.value === 'novel_multiagent') {
     cmdInput.placeholder = '留空即可：系统会自动生成小说多Agent流水线命令';
     if (expectation && !expectation.value) {
       expectation.value = '需要关键词报告、爆款标题模板、开头模板、压缩包交付';

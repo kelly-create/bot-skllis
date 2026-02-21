@@ -121,8 +121,8 @@
         </div>
 
         {% if multiagent %}
-        <div class="card soft-card mb-3">
-          <div class="card-header">Lead 分发与复核轨迹（角色调用明细）</div>
+        <details class="card soft-card mb-3">
+          <summary class="card-header" style="cursor:pointer; list-style:none;">Lead 分发与复核轨迹（角色调用明细）</summary>
           <div class="card-body small">
             <div class="mb-1">工作流：<b>{{ multiagent.workflow }}</b></div>
             <div class="mb-1">本轮需求分析：<b>{{ multiagent.intake_role }}</b>（<code>{{ multiagent.intake_model }}</code>）</div>
@@ -174,7 +174,7 @@
               </table>
             </div>
           </div>
-        </div>
+        </details>
         {% endif %}
 
         {# 目录与环境变量卡片按用户要求隐藏 #}

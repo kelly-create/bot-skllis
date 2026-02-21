@@ -249,7 +249,7 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ 小说流水线已补“最近7天采样硬门槛”（`min_recent_7d`）并修复“strict未通过仍返回rc=0”漏洞；默认任务命令已强制 `--min-recent-7d 7`。
 - ✅ 每次重跑已增加 `run_id` 日志前缀 + 自动清理旧输出/角色会话；停止任务改为进程组级终止，减少残留子进程导致的结果混杂。
 - ✅ 小红书采集已新增“频控识别+反拦截自适应轮次”（降速、关键词级冷却重试、禁扩词切换），避免被拦截后机械重跑。
-- ✅ Agent Team 已重构为双主角色智能架构：`@frontend(gpt-5.3-codex)` + `@backend(MiniMax-M2.5)`，默认工作流切换为 `intelligent_dual`，支持首阶段评估后动态分配与跳过非必要阶段。
+- ✅ Agent Team 已重构为双主角色智能架构：`@frontend(MiniMax-M2.5)` + `@backend(gpt-5.3-codex)`，默认工作流切换为 `intelligent_dual`，支持首阶段评估后动态分配与跳过非必要阶段。
 - ✅ 已补充“小说爆款文包”生成脚本（关键词报告 + 标题/开头模板 + 打包下载）。
 - ✅ 已上线“小说类目多Agent复核流水线”（Collector/Cleaner/Reviewer/Packager）。
 - ✅ 多Agent产物已支持中文文件名与 zip/7z 可选压缩（默认 zip，7z 不可用时自动回退 zip）。
