@@ -96,6 +96,7 @@ def parse_args():
     p.add_argument("--max-keywords", type=int, default=30, help="自动扩展后的最大关键词总数")
     p.add_argument("--domain", choices=["general", "novel"], default="general", help="业务域过滤：general|novel")
     p.add_argument("--min-domain-ratio", type=float, default=0.25, help="novel域下TOP词命中率下限（strict时生效）")
+    p.add_argument("--min-recent-7d", type=int, default=0, help="strict 模式下最近7天有效采样源最低数量（0=不校验）")
     p.add_argument(
         "--cookie-file",
         default=os.path.join(os.getenv("TASK_INPUT_DIR", "."), "xhs_cookies.json"),
@@ -139,6 +140,23 @@ def sanitize_text(text: str) -> str:
 
 def is_time_phrase(s: str) -> bool:
     return bool(re.search(r"\d+\s*(天前|小时前|分钟前|秒前)$", s)) or s in {"天前", "小时前", "分钟前", "秒前"}
+
+
+def has_recent_7d_signal(text: str) -> bool:
+    t = text or ""
+    if not t:
+        return False
+    if any(k in t for k in ["刚刚", "今天", "昨天"]):
+        return True
+    if re.search(r"\d+\s*(分钟前|小时前)", t):
+        return True
+    for m in re.finditer(r"(\d+)\s*天前", t):
+        try:
+            if int(m.group(1)) <= 7:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def domain_ok(word: str, domain: str) -> bool:
@@ -352,6 +370,7 @@ def build_report(raw_items, max_top=80, domain="general"):
     counter = Counter()
     total_chars = 0
     usable_sources = 0
+    recent_7d_sources = 0
     blocked_sources = 0
 
     for item in raw_items:
@@ -369,6 +388,8 @@ def build_report(raw_items, max_top=80, domain="general"):
             continue
 
         usable_sources += 1
+        if has_recent_7d_signal((item.get("text_raw") or "") + "\n" + txt):
+            recent_7d_sources += 1
         total_chars += len(txt)
         for w in extract_words(txt, domain=domain):
             counter[w] += 1
@@ -386,6 +407,7 @@ def build_report(raw_items, max_top=80, domain="general"):
         "keywords": [x.get("keyword") for x in raw_items],
         "sourceCount": len(raw_items),
         "usableSourceCount": usable_sources,
+        "recent7dSourceCount": recent_7d_sources,
         "blockedSourceCount": blocked_sources,
         "totalChars": total_chars,
         "domain": domain,
@@ -408,6 +430,7 @@ def write_outputs(report, raw_items, out_md, out_json):
     lines.append(f"- 关键词：{', '.join(report['keywords'])}")
     lines.append(f"- 采样源数量：{report['sourceCount']}")
     lines.append(f"- 有效采样源：{report['usableSourceCount']}")
+    lines.append(f"- 最近7天采样源：{report.get('recent7dSourceCount', 0)}")
     lines.append(f"- 风控/拦截源：{report['blockedSourceCount']}")
     lines.append(f"- 有效文本总长度：{report['totalChars']}")
     lines.append(f"- 领域命中率(top20)：{report.get('domainTop20HitRatio', 0)}\n")
@@ -466,6 +489,15 @@ def main():
             file=sys.stderr,
         )
         sys.exit(2)
+
+    if args.strict and int(args.min_recent_7d or 0) > 0:
+        recent_7d = int(report.get("recent7dSourceCount") or 0)
+        if recent_7d < int(args.min_recent_7d):
+            print(
+                f"[ERROR] 最近7天采样源不足（{recent_7d} < {args.min_recent_7d}），结果不可信，按 strict 模式返回失败",
+                file=sys.stderr,
+            )
+            sys.exit(4)
 
     if args.strict and args.domain == "novel":
         ratio = float(report.get("domainTop20HitRatio", 0.0))

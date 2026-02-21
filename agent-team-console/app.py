@@ -1337,7 +1337,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 f"cd {WORKDIR} && python3 scripts/xhs_novel_multiagent_pipeline.py "
                 "--keywords '小说推文,小说推荐,网文,言情小说,悬疑小说,完结小说,书荒推荐,番茄小说,爽文小说,推理小说' "
                 "--cookie-file $TASK_INPUT_DIR/xhs_cookies.json "
-                "--output-dir $TASK_OUTPUT_DIR --max-rounds 3 --min-usable 8 --min-domain-ratio 0.75 --max-noise-ratio 0.35 --pack-format zip"
+                "--output-dir $TASK_OUTPUT_DIR --max-rounds 3 --min-usable 8 --min-recent-7d 7 --min-domain-ratio 0.75 --max-noise-ratio 0.35 --pack-format zip"
             )
 
         user_prompt = (
@@ -2011,7 +2011,7 @@ def build_command_from_template(template_name: str, project_dir: str, task_brief
             f"--keywords '{keywords}' "
             "--cookie-file $TASK_INPUT_DIR/xhs_cookies.json "
             "--output-dir $TASK_OUTPUT_DIR "
-            "--max-rounds 3 --min-usable 8 --min-domain-ratio 0.75 --max-noise-ratio 0.35 "
+            "--max-rounds 3 --min-usable 8 --min-recent-7d 7 --min-domain-ratio 0.75 --max-noise-ratio 0.35 "
             "--pack-format zip"
         )
 

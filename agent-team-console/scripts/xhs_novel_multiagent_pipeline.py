@@ -66,7 +66,9 @@ def parse_args():
     p.add_argument("--max-rounds", type=int, default=3)
     p.add_argument("--min-usable", type=int, default=8)
     p.add_argument("--min-domain-ratio", type=float, default=0.75)
+    p.add_argument("--min-recent-7d", type=int, default=7, help="最近7天有效采样源最小数量")
     p.add_argument("--max-noise-ratio", type=float, default=0.35)
+    p.add_argument("--allow-best-effort", action="store_true", help="所有轮次未达标时，允许使用候选数据继续生成（默认关闭）")
     p.add_argument("--pack-format", choices=["zip", "7z"], default="zip", help="压缩格式：zip 或 7z")
     return p.parse_args()
 
@@ -181,6 +183,8 @@ def main():
 
     selected_json = None
     selected_report = None
+    selected_round = None
+    passed = False
 
     for idx, cfg in enumerate(rounds, 1):
         log("Lead Agent", f"开始第 {idx} 轮：{cfg}")
@@ -194,7 +198,7 @@ def main():
             f"--cookie-file '{args.cookie_file}' "
             f"--scrolls {cfg['scrolls']} --auto-related {cfg['auto_related']} --max-keywords {cfg['max_keywords']} "
             "--domain novel --strict "
-            f"--min-usable {args.min_usable} --min-domain-ratio {args.min_domain_ratio} "
+            f"--min-usable {args.min_usable} --min-domain-ratio {args.min_domain_ratio} --min-recent-7d {args.min_recent_7d} "
             f"--out-md '{out_md}' --out-json '{out_json}'"
         )
 
@@ -208,6 +212,7 @@ def main():
         top_words = report.get("topWords", [])
 
         usable = int(report.get("usableSourceCount") or 0)
+        recent_7d = int(report.get("recent7dSourceCount") or 0)
         domain_ratio = float(report.get("domainTop20HitRatio") or 0.0)
         noise_ratio = compute_noise_ratio(top_words, n=20)
 
@@ -215,20 +220,24 @@ def main():
             "round": idx,
             "rc": rc,
             "usable": usable,
+            "recent7d": recent_7d,
             "domainRatio": domain_ratio,
             "noiseRatioTop20": round(noise_ratio, 4),
             "outputJson": out_json,
         }
         audit["rounds"].append(round_stat)
 
-        log("Reviewer Agent", f"第{idx}轮复核: usable={usable}, domainRatio={domain_ratio}, noiseRatio={noise_ratio:.3f}")
+        log("Reviewer Agent", f"第{idx}轮复核: usable={usable}, recent7d={recent_7d}, domainRatio={domain_ratio}, noiseRatio={noise_ratio:.3f}")
 
         pass_ok = (
             usable >= args.min_usable
+            and recent_7d >= args.min_recent_7d
             and domain_ratio >= args.min_domain_ratio
             and noise_ratio <= args.max_noise_ratio
         )
         if pass_ok:
+            passed = True
+            selected_round = idx
             selected_json = out_json
             selected_report = report
             audit["decision"] = {"round": idx, "result": "pass"}
@@ -237,6 +246,7 @@ def main():
 
         # 保存当前最优候选（至少有数据）
         if selected_report is None and usable > 0:
+            selected_round = idx
             selected_json = out_json
             selected_report = report
 
@@ -247,6 +257,27 @@ def main():
             json.dump(audit, f, ensure_ascii=False, indent=2)
         log("Lead Agent", "所有轮次均未通过，且无可用候选数据")
         sys.exit(2)
+
+    if not passed:
+        if not args.allow_best_effort:
+            audit["decision"] = {
+                "result": "fail",
+                "reason": "quality_gate_not_passed",
+                "required": {
+                    "minUsable": args.min_usable,
+                    "minRecent7d": args.min_recent_7d,
+                    "minDomainRatio": args.min_domain_ratio,
+                    "maxNoiseRatio": args.max_noise_ratio,
+                },
+                "fallbackRound": selected_round,
+            }
+            with open(audit_path, "w", encoding="utf-8") as f:
+                json.dump(audit, f, ensure_ascii=False, indent=2)
+            log("Lead Agent", "所有轮次均未达到质量闸门，任务失败（未开启 best effort）")
+            sys.exit(2)
+        else:
+            audit["decision"] = {"result": "best_effort", "round": selected_round}
+            log("Lead Agent", f"所有轮次未达标，已按 best effort 使用第{selected_round}轮候选继续")
 
     # Cleaner Agent: 输出纯化版词表（中文文件名）
     final_md = os.path.join(args.output_dir, "小说类目_高频词_纯化版.md")
