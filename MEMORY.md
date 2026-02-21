@@ -264,4 +264,5 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ 已修复模板默认路径与部署路径不一致导致的 `rc=1`（默认项目路径改为运行时工作目录）。
 - ✅ 失败诊断已升级为“最新run聚焦 + 根因人话化 + 证据去噪 + 建议定向化”，并在任务详情显示运行ID，减少“看不懂为何失败”。
 - ✅ 多Agent已支持“动态验收契约 + 多轮角色碰撞”：Lead可下发 `acceptance_contract`（不写死文件名）与 `collision_rounds`，执行阶段先经 reviewer↔执行角色对抗评审再走质控。
+- ✅ OpenClaw 已从 `2026.2.3-1` 升级到 `2026.2.21-2`（stable 最新）。
 - ✅ 代码已同步 GitHub（提交 `df2deff`）。
