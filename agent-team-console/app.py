@@ -31,6 +31,7 @@ ROLE_DEFAULT_TIMEOUT = int(os.getenv("ATC_ROLE_TIMEOUT_SECONDS", "180"))
 ROLE_MAX_REWORK_ROUNDS = max(0, min(5, int(os.getenv("ATC_MAX_REWORK_ROUNDS", "5"))))
 ROLE_STAGE_REVIEW_MAX_RETRIES = max(0, min(5, int(os.getenv("ATC_STAGE_REVIEW_MAX_RETRIES", "5"))))
 ROLE_MAX_TOOL_ROUNDS = max(1, min(10, int(os.getenv("ATC_ROLE_MAX_TOOL_ROUNDS", "5"))))
+ROLE_REASONING_EFFORT = (os.getenv("ATC_ROLE_REASONING_EFFORT", "high") or "high").strip()
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 os.makedirs(ARTIFACT_ROOT, exist_ok=True)
@@ -936,6 +937,13 @@ def call_role_llm(role, messages):
         "temperature": float(role["temperature"] if role["temperature"] is not None else 0.3),
         "max_tokens": int(role["max_tokens"] if role["max_tokens"] is not None else 1200),
     }
+
+    # GPT/Codex 角色默认开启深度思考参数（MiniMax等模型不注入）
+    ml = model.lower()
+    if ml.startswith("gpt-") or ("codex" in ml):
+        effort = ROLE_REASONING_EFFORT if ROLE_REASONING_EFFORT in ("low", "medium", "high") else "high"
+        payload["reasoning"] = {"effort": effort}
+        payload["thinking"] = effort
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
     req = urllib.request.Request(
