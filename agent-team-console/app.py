@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import shutil
+import signal
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -38,6 +39,7 @@ app.secret_key = APP_SECRET
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024  # 200MB
 
 running_processes = {}
+task_run_context = {}
 
 
 class ConcurrencyLimiter:
@@ -146,6 +148,33 @@ def task_artifact_dirs(task_id: int):
     os.makedirs(in_dir, exist_ok=True)
     os.makedirs(out_dir, exist_ok=True)
     return base, in_dir, out_dir
+
+
+def build_task_run_id(task_id: int) -> str:
+    return f"run-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{task_id}-{int(time.time()*1000)%100000}"
+
+
+def clear_dir_contents(path: str) -> int:
+    if not os.path.isdir(path):
+        return 0
+    removed = 0
+    for name in os.listdir(path):
+        p = os.path.join(path, name)
+        try:
+            if os.path.isfile(p) or os.path.islink(p):
+                os.remove(p)
+            else:
+                shutil.rmtree(p, ignore_errors=True)
+            removed += 1
+        except Exception:
+            continue
+    return removed
+
+
+def clear_role_session_messages(task_id: int) -> int:
+    with db_conn() as conn:
+        cur = conn.execute("DELETE FROM role_session_messages WHERE task_id=?", (task_id,))
+        return int(cur.rowcount or 0)
 
 
 def list_task_files(task_id: int, kind: str):
@@ -790,10 +819,14 @@ def get_workflows(enabled_only: bool = False):
 
 
 def append_log(task_id: int, line: str):
+    rid = task_run_context.get(task_id)
+    text = (line or "")
+    if rid and not text.startswith("[run:"):
+        text = f"[run:{rid}] {text}"
     with db_conn() as conn:
         conn.execute(
             "INSERT INTO task_logs(task_id, ts, line) VALUES(?,?,?)",
-            (task_id, now_str(), line[:4000]),
+            (task_id, now_str(), text[:4000]),
         )
 
 
@@ -1583,15 +1616,27 @@ def run_task(task_id: int):
     task = get_task(task_id)
     if not task:
         running_processes.pop(task_id, None)
+        task_run_context.pop(task_id, None)
         return
 
     with limiter.acquire():
         update_task(task_id, status="running", started_at=now_str(), return_code=None)
         base_dir, input_dir, output_dir = task_artifact_dirs(task_id)
+
+        run_id = build_task_run_id(task_id)
+        task_run_context[task_id] = run_id
+
+        removed_outputs = clear_dir_contents(output_dir)
+        cleared_msgs = clear_role_session_messages(task_id)
+
+        append_log(task_id, f"[SYSTEM] 本次运行ID: {run_id}")
         append_log(task_id, f"[SYSTEM] 任务启动，当前并发上限={limiter.get_limit()}")
         append_log(task_id, f"[SYSTEM] 任务产物目录: {base_dir}")
         append_log(task_id, f"[SYSTEM] 输入附件目录: {input_dir}")
         append_log(task_id, f"[SYSTEM] 输出产物目录: {output_dir}")
+        append_log(task_id, f"[SYSTEM] 已清理上一轮输出文件: {removed_outputs} 项")
+        if cleared_msgs > 0:
+            append_log(task_id, f"[SYSTEM] 已清理上一轮角色会话消息: {cleared_msgs} 条")
 
         cmd = (task["command"] or "").strip()
         if not cmd:
@@ -1610,6 +1655,7 @@ def run_task(task_id: int):
                     append_log(task_id, f"[SYSTEM] 多Agent流程失败：{e}")
                 finally:
                     running_processes.pop(task_id, None)
+                    task_run_context.pop(task_id, None)
                 return
 
             # 无工作流时保留演示流程
@@ -1631,6 +1677,7 @@ def run_task(task_id: int):
                 append_log(task_id, f"[SYSTEM] 任务失败：{e}")
             finally:
                 running_processes.pop(task_id, None)
+                task_run_context.pop(task_id, None)
             return
 
         try:
@@ -1639,6 +1686,7 @@ def run_task(task_id: int):
             env.update(
                 {
                     "TASK_ID": str(task_id),
+                    "TASK_RUN_ID": run_id,
                     "TASK_ARTIFACT_DIR": base_dir,
                     "TASK_INPUT_DIR": input_dir,
                     "TASK_OUTPUT_DIR": output_dir,
@@ -1650,6 +1698,7 @@ def run_task(task_id: int):
                 cwd=WORKDIR,
                 executable="/bin/bash",
                 env=env,
+                start_new_session=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -1675,6 +1724,7 @@ def run_task(task_id: int):
             append_log(task_id, f"[SYSTEM] 执行异常：{e}")
         finally:
             running_processes.pop(task_id, None)
+            task_run_context.pop(task_id, None)
 
 
 def start_task(task_id: int):
@@ -2150,6 +2200,7 @@ def stop_task(task_id: int):
     proc = running_processes.get(task_id)
     if proc is None and task_id in running_processes:
         running_processes.pop(task_id, None)
+        task_run_context.pop(task_id, None)
         update_task(task_id, status="failed", finished_at=now_str(), return_code=137)
         append_log(task_id, "[SYSTEM] 任务在启动阶段被停止")
         flash(f"任务 #{task_id} 已停止")
@@ -2160,7 +2211,12 @@ def stop_task(task_id: int):
         return redirect(url_for("dashboard"))
 
     try:
-        proc.terminate()
+        try:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGTERM)
+            append_log(task_id, f"[SYSTEM] 已发送停止信号到进程组 pgid={pgid}")
+        except Exception:
+            proc.terminate()
         update_task(task_id, status="failed", finished_at=now_str(), return_code=143)
         append_log(task_id, "[SYSTEM] 手动停止任务")
         flash(f"任务 #{task_id} 已停止")
