@@ -981,6 +981,158 @@ def parse_verifier_feedback(text: str) -> dict:
     return out
 
 
+def parse_role_action(text: str) -> dict:
+    raw = (text or "").strip()
+    out = {"action": "final", "content": raw, "command": "", "reason": ""}
+    if not raw:
+        return out
+
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if not m:
+        return out
+
+    try:
+        data = json.loads(m.group(0))
+    except Exception:
+        return out
+
+    action = str(data.get("action") or "").strip().lower()
+    if action == "run_command":
+        out["action"] = "run_command"
+        out["command"] = str(data.get("command") or data.get("cmd") or "").strip()
+        out["reason"] = str(data.get("reason") or "").strip()
+        return out
+
+    if action == "final":
+        out["action"] = "final"
+        out["content"] = str(data.get("content") or raw).strip()
+        return out
+
+    return out
+
+
+def is_safe_role_command(command: str) -> tuple[bool, str]:
+    cmd = (command or "").strip()
+    if not cmd:
+        return False, "命令为空"
+    if len(cmd) > 800:
+        return False, "命令过长（>800）"
+    if "\n" in cmd or "\r" in cmd:
+        return False, "命令不能包含换行"
+
+    blocked = [
+        "rm -rf /",
+        "shutdown",
+        "reboot",
+        "mkfs",
+        "fdisk",
+        "poweroff",
+        ":(){",
+        "halt",
+        "systemctl stop",
+        "systemctl disable",
+    ]
+    lower = cmd.lower()
+    for b in blocked:
+        if b in lower:
+            return False, f"命中高危命令片段: {b}"
+    return True, "ok"
+
+
+def execute_role_command(command: str, task_id: int, base_dir: str, input_dir: str, output_dir: str, timeout_sec: int = 240) -> dict:
+    env = os.environ.copy()
+    env.update(
+        {
+            "TASK_ID": str(task_id),
+            "TASK_ARTIFACT_DIR": base_dir,
+            "TASK_INPUT_DIR": input_dir,
+            "TASK_OUTPUT_DIR": output_dir,
+        }
+    )
+
+    proc = subprocess.Popen(
+        command,
+        shell=True,
+        cwd=WORKDIR,
+        executable="/bin/bash",
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    try:
+        out, _ = proc.communicate(timeout=max(30, int(timeout_sec)))
+        rc = proc.returncode
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        out, _ = proc.communicate()
+        rc = 124
+        timed_out = True
+
+    out = (out or "")[-6000:]
+    return {"rc": rc, "output": out, "timedOut": timed_out}
+
+
+def run_role_stage_with_tools(
+    task_id: int,
+    stage: str,
+    role,
+    messages: list,
+    base_dir: str,
+    input_dir: str,
+    output_dir: str,
+    max_tool_rounds: int = 2,
+):
+    tool_round = 0
+    tool_events = []
+
+    while True:
+        ensure_not_stopped(task_id)
+        assistant_text = call_role_llm(role, messages)
+        save_role_message(task_id, role["code"], stage, "assistant", assistant_text)
+
+        action = parse_role_action(assistant_text)
+        if action["action"] == "run_command" and tool_round < max_tool_rounds:
+            cmd = action.get("command", "")
+            ok, reason = is_safe_role_command(cmd)
+            if not ok:
+                result = {"rc": 1, "output": f"[TOOL_BRIDGE] 拒绝执行：{reason}", "timedOut": False}
+            else:
+                result = execute_role_command(cmd, task_id, base_dir, input_dir, output_dir)
+
+            tool_events.append(
+                {
+                    "round": tool_round + 1,
+                    "command": cmd,
+                    "rc": result["rc"],
+                    "timedOut": result["timedOut"],
+                }
+            )
+            append_log(
+                task_id,
+                f"[{role['code']}] 工具执行 round={tool_round+1}/{max_tool_rounds} rc={result['rc']} timedOut={result['timedOut']} cmd={cmd}",
+            )
+
+            tool_feedback = (
+                "工具执行结果如下，请基于结果继续。\n"
+                f"命令: {cmd}\n"
+                f"返回码: {result['rc']}\n"
+                f"是否超时: {result['timedOut']}\n"
+                f"输出片段:\n{result['output']}\n\n"
+                "若还需要执行工具，可继续返回 run_command JSON；若已完成，请返回 final JSON。"
+            )
+            messages.append({"role": "assistant", "content": assistant_text})
+            messages.append({"role": "user", "content": tool_feedback})
+            save_role_message(task_id, role["code"], stage, "user", tool_feedback)
+            tool_round += 1
+            continue
+
+        final_content = action.get("content") if action.get("action") == "final" else assistant_text
+        return final_content, tool_events
+
+
 def find_stage_index_by_role(stages: list, stage_roles: dict, role_code: str, before_idx: int, fallback_idx: int = 0) -> int:
     rc = (role_code or "").strip()
     if not rc:
@@ -1027,7 +1179,7 @@ def parse_dispatch_assignments(text: str, allowed_stages: list, enabled_role_cod
     return out
 
 
-def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
+def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: str, output_dir: str):
     stages = parse_stages(wf["stages_json"])
     stage_roles = parse_stage_roles(wf["stage_roles_json"])
     if not stages:
@@ -1102,6 +1254,11 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
             stage_instruction = (
                 "你只负责当前阶段，不要替下一阶段做决定。"
                 "输出本阶段可直接交接给下阶段的结果（中文、结构化、可执行）。"
+                "如果需要实际执行工具/脚本，请只输出 JSON："
+                '{"action":"run_command","command":"python3 scripts/xxx.py ...","reason":"为什么要执行"}'
+                "。系统会执行后把结果回传给你。"
+                "当阶段完成时，请输出 JSON："
+                '{"action":"final","content":"你的阶段交付内容"}'
             )
 
         user_prompt = (
@@ -1125,8 +1282,16 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
         stage_started_at = now_str()
         stage_t0 = time.perf_counter()
         save_role_message(task_id, role_code, stage, "user", user_prompt)
-        output = call_role_llm(role, messages)
-        save_role_message(task_id, role_code, stage, "assistant", output)
+        output, tool_events = run_role_stage_with_tools(
+            task_id=task_id,
+            stage=stage,
+            role=role,
+            messages=messages,
+            base_dir=base_dir,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            max_tool_rounds=2,
+        )
         stage_duration_sec = round(time.perf_counter() - stage_t0, 2)
 
         execution_no += 1
@@ -1149,6 +1314,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
             "reworkRound": rework_round,
             "startedAt": stage_started_at,
             "durationSec": stage_duration_sec,
+            "toolEvents": tool_events,
             "outputFile": os.path.basename(stage_file),
             "outputChars": len(output),
             "finishedAt": now_str(),
@@ -1313,7 +1479,7 @@ def run_task(task_id: int):
                     if not wf:
                         raise RuntimeError(f"未找到工作流: {wf_code}")
                     append_log(task_id, f"[SYSTEM] 启动多Agent独立会话流程：{wf_code}")
-                    run_multi_agent_workflow(task_id, task, wf, output_dir)
+                    run_multi_agent_workflow(task_id, task, wf, base_dir, input_dir, output_dir)
                     update_task(task_id, status="done", finished_at=now_str(), return_code=0)
                     append_log(task_id, "[SYSTEM] 任务完成（多Agent独立会话）")
                 except Exception as e:
