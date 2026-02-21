@@ -1482,7 +1482,26 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             if isinstance(active_stages, list):
                 # 守住末端质控/交付类阶段，避免被误跳过
                 safety_stages = [s for s in allowed_following_stages if ("验证" in s or "复核" in s or "交付" in s)]
-                active_final = sorted(set(active_stages + safety_stages))
+                active_final = list(dict.fromkeys(active_stages + safety_stages))
+
+                # 防呆：若Lead把所有执行阶段都跳过，自动补回至少一个执行阶段，避免“只复核不执行”死循环
+                exec_candidates = [
+                    s
+                    for s in allowed_following_stages
+                    if any(k in s for k in ["前端", "后端", "执行", "采集", "开发", "文包"])
+                ]
+                if exec_candidates and all(s not in active_final for s in exec_candidates):
+                    preferred = None
+                    for p in ["后端实现", "执行", "开发", "采集", "前端实现"]:
+                        if p in exec_candidates:
+                            preferred = p
+                            break
+                    if not preferred:
+                        preferred = exec_candidates[0]
+                    active_final = list(dict.fromkeys(active_final + [preferred]))
+                    stage_audit["autoAddedExecutionStage"] = preferred
+                    append_log(task_id, f"[Lead Agent] 检测到执行阶段被全部跳过，已自动补回：{preferred}")
+
                 active_stage_set = {stages[0], *active_final}
                 skipped = [s for s in allowed_following_stages if s not in active_stage_set]
                 stage_audit["activeStages"] = active_final
