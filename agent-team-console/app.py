@@ -1011,6 +1011,28 @@ def parse_role_action(text: str) -> dict:
     return out
 
 
+def list_output_file_names(output_dir: str) -> set:
+    if not os.path.isdir(output_dir):
+        return set()
+    out = set()
+    for name in os.listdir(output_dir):
+        full = os.path.join(output_dir, name)
+        if os.path.isfile(full):
+            out.add(name)
+    return out
+
+
+def is_system_generated_output(name: str) -> bool:
+    n = (name or "").strip()
+    return n.startswith("步骤") or n in ("多Agent_最终交付.md", "多Agent_会话审计.json")
+
+
+def task_requires_real_artifacts(task_text: str) -> bool:
+    t = (task_text or "")
+    keys = ["爬取", "采集", "关键词", "文包", "报告", "导出", "csv", "json", "zip", "附件"]
+    return any(k in t for k in keys)
+
+
 def is_safe_role_command(command: str) -> tuple[bool, str]:
     cmd = (command or "").strip()
     if not cmd:
@@ -1254,11 +1276,28 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             stage_instruction = (
                 "你只负责当前阶段，不要替下一阶段做决定。"
                 "输出本阶段可直接交接给下阶段的结果（中文、结构化、可执行）。"
+                "如果任务涉及爬取/采集/关键词/文包，必须通过 run_command 产出真实文件到 $TASK_OUTPUT_DIR。"
                 "如果需要实际执行工具/脚本，请只输出 JSON："
                 '{"action":"run_command","command":"python3 scripts/xxx.py ...","reason":"为什么要执行"}'
                 "。系统会执行后把结果回传给你。"
                 "当阶段完成时，请输出 JSON："
                 '{"action":"final","content":"你的阶段交付内容"}'
+            )
+
+        task_text_all = "\n".join([
+            sections.get("task") or "",
+            sections.get("delivery") or "",
+            sections.get("extra") or "",
+            task["title"] or "",
+        ])
+        command_hint = ""
+        if any(k in task_text_all for k in ["小说", "关键词", "文包", "爬取", "采集"]):
+            command_hint = (
+                "\n\n可直接执行的参考命令（如适配本任务请优先使用）：\n"
+                f"cd {WORKDIR} && python3 scripts/xhs_novel_multiagent_pipeline.py "
+                "--keywords '小说推文,小说推荐,网文,言情小说,悬疑小说,完结小说,书荒推荐,番茄小说,爽文小说,推理小说' "
+                "--cookie-file $TASK_INPUT_DIR/xhs_cookies.json "
+                "--output-dir $TASK_OUTPUT_DIR --max-rounds 3 --min-usable 8 --min-domain-ratio 0.75 --max-noise-ratio 0.35 --pack-format zip"
             )
 
         user_prompt = (
@@ -1270,6 +1309,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             f"上一个阶段输出（若为空可忽略）：\n{previous_output}\n\n"
             f"返工/交接说明（若为空可忽略）：\n{handoff_note}\n\n"
             f"阶段规则：{stage_instruction}"
+            f"{command_hint}"
         )
 
         messages = [{"role": "system", "content": sys_prompt}]
@@ -1279,6 +1319,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 messages.append({"role": turn, "content": h["content"] or ""})
         messages.append({"role": "user", "content": user_prompt})
 
+        stage_files_before = list_output_file_names(output_dir)
         stage_started_at = now_str()
         stage_t0 = time.perf_counter()
         save_role_message(task_id, role_code, stage, "user", user_prompt)
@@ -1293,6 +1334,9 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             max_tool_rounds=2,
         )
         stage_duration_sec = round(time.perf_counter() - stage_t0, 2)
+        stage_files_after = list_output_file_names(output_dir)
+        produced_files = sorted(list(stage_files_after - stage_files_before))
+        produced_non_system = [x for x in produced_files if not is_system_generated_output(x)]
 
         execution_no += 1
         stage_file = os.path.join(
@@ -1315,6 +1359,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             "startedAt": stage_started_at,
             "durationSec": stage_duration_sec,
             "toolEvents": tool_events,
+            "producedFiles": produced_files,
+            "producedNonSystemFiles": produced_non_system,
             "outputFile": os.path.basename(stage_file),
             "outputChars": len(output),
             "finishedAt": now_str(),
@@ -1333,59 +1379,83 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
 
         # 每个执行角色完成后都做阶段质控（由 @verifier 复核）
         if (not verifier_mode) and (not lead_dispatch_mode):
-            reviewer_role = get_role_by_code("@verifier")
-            if reviewer_role and int(reviewer_role["enabled"] or 0) == 1:
-                review_stage = f"{stage}-阶段质控"
-                review_prompt = (
-                    "你是阶段质控复核。请只对当前阶段输出进行验收，不要重写实现。"
-                    f"当前阶段：{stage}，执行角色：{role_code}。\n"
-                    f"任务目标：{sections.get('task') or task['description'] or ''}\n"
-                    f"期望交付：{sections.get('delivery') or ''}\n"
-                    f"本阶段输出：\n{output}\n\n"
-                    "请返回 JSON："
-                    '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"当前角色code","rework_instructions":"..."}'
-                    "。若 FAIL，send_back_role 优先填当前角色。"
-                )
-                review_msgs = [
-                    {
-                        "role": "system",
-                        "content": (reviewer_role["system_prompt"] or "你是严格质控复核角色。"),
-                    },
-                    {"role": "user", "content": review_prompt},
-                ]
-                save_role_message(task_id, "@verifier", review_stage, "user", review_prompt)
-                review_output = call_role_llm(reviewer_role, review_msgs)
-                save_role_message(task_id, "@verifier", review_stage, "assistant", review_output)
-                quality = parse_verifier_feedback(review_output)
-                stage_audit["qualityGate"] = {"raw": review_output, "decision": quality}
+            auto_fail_reason = ""
+            if tool_events and all(int(e.get("rc", 1)) != 0 for e in tool_events):
+                auto_fail_reason = "执行了工具命令但全部失败（rc非0），请先修复命令/环境后再提交。"
 
-                q_dec = quality.get("decision", "UNKNOWN")
-                append_log(task_id, f"[@verifier] 阶段质控结论：{q_dec} | stage={stage} | reason={quality.get('reason','')[:120]}")
+            needs_artifacts = task_requires_real_artifacts(task_text_all)
+            if (not auto_fail_reason) and needs_artifacts and (stage in ["执行", "采集", "开发", "文包", "交付"]) and len(produced_non_system) == 0:
+                auto_fail_reason = "任务要求包含可验收产物（爬取/关键词/文包等），但本阶段未在输出目录产出真实文件。"
 
-                if q_dec != "PASS":
-                    if stage_retry >= max_stage_review_retries:
-                        stage_audit["terminatedByStageReview"] = True
-                        audit["stages"].append(stage_audit)
-                        raise RuntimeError(f"阶段 {stage} 质控未通过，且已达本阶段最大重试 {max_stage_review_retries}")
-
-                    stage_retry_counts[stage] = stage_retry + 1
-                    handoff_note = (
-                        f"阶段质控未通过（{stage}，第{stage_retry_counts[stage]}次重试）。"
-                        f"原因：{quality.get('reason','')}。"
-                        f"问题：{'；'.join(quality.get('issues') or [])}。"
-                        f"修改要求：{quality.get('rework_instructions','请根据质控意见修改后重新提交本阶段。')}"
-                    )
-                    append_log(
-                        task_id,
-                        f"[Lead Agent] 阶段质控未通过，打回当前阶段重做：{stage}（{stage_retry_counts[stage]}/{max_stage_review_retries}）",
-                    )
-                    previous_output = output
-                    audit["stages"].append(stage_audit)
-                    continue
-                else:
-                    stage_retry_counts[stage] = 0
+            quality = None
+            review_output = ""
+            if auto_fail_reason:
+                quality = {
+                    "decision": "FAIL",
+                    "reason": auto_fail_reason,
+                    "issues": ["缺少真实产物文件或工具执行失败"],
+                    "send_back_role": role_code,
+                    "rework_instructions": "请通过 run_command 真实执行并产出文件到 $TASK_OUTPUT_DIR，再提交 final。",
+                }
+                stage_audit["qualityGate"] = {"raw": "", "decision": quality, "autoRule": "artifact_or_tool_guard"}
+                append_log(task_id, f"[@verifier] 阶段质控结论：FAIL | stage={stage} | reason={auto_fail_reason}")
             else:
-                stage_audit["qualityGate"] = {"decision": {"decision": "SKIP", "reason": "@verifier不可用，跳过阶段质控"}}
+                reviewer_role = get_role_by_code("@verifier")
+                if reviewer_role and int(reviewer_role["enabled"] or 0) == 1:
+                    review_stage = f"{stage}-阶段质控"
+                    review_prompt = (
+                        "你是阶段质控复核。请只对当前阶段输出进行验收，不要重写实现。"
+                        f"当前阶段：{stage}，执行角色：{role_code}。\n"
+                        f"任务目标：{sections.get('task') or task['description'] or ''}\n"
+                        f"期望交付：{sections.get('delivery') or ''}\n"
+                        f"本阶段输出：\n{output}\n\n"
+                        f"本阶段产出文件（非系统生成）：{produced_non_system}\n"
+                        "请返回 JSON："
+                        '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"当前角色code","rework_instructions":"..."}'
+                        "。若 FAIL，send_back_role 优先填当前角色。"
+                    )
+                    review_msgs = [
+                        {
+                            "role": "system",
+                            "content": (reviewer_role["system_prompt"] or "你是严格质控复核角色。"),
+                        },
+                        {"role": "user", "content": review_prompt},
+                    ]
+                    save_role_message(task_id, "@verifier", review_stage, "user", review_prompt)
+                    review_output = call_role_llm(reviewer_role, review_msgs)
+                    save_role_message(task_id, "@verifier", review_stage, "assistant", review_output)
+                    quality = parse_verifier_feedback(review_output)
+                    stage_audit["qualityGate"] = {"raw": review_output, "decision": quality}
+
+                    q_dec = quality.get("decision", "UNKNOWN")
+                    append_log(task_id, f"[@verifier] 阶段质控结论：{q_dec} | stage={stage} | reason={quality.get('reason','')[:120]}")
+                else:
+                    quality = {"decision": "SKIP", "reason": "@verifier不可用，跳过阶段质控"}
+                    stage_audit["qualityGate"] = {"decision": quality}
+
+            q_dec = (quality or {}).get("decision", "UNKNOWN")
+            if q_dec != "PASS" and q_dec != "SKIP":
+                if stage_retry >= max_stage_review_retries:
+                    stage_audit["terminatedByStageReview"] = True
+                    audit["stages"].append(stage_audit)
+                    raise RuntimeError(f"阶段 {stage} 质控未通过，且已达本阶段最大重试 {max_stage_review_retries}")
+
+                stage_retry_counts[stage] = stage_retry + 1
+                handoff_note = (
+                    f"阶段质控未通过（{stage}，第{stage_retry_counts[stage]}次重试）。"
+                    f"原因：{(quality or {}).get('reason','')}。"
+                    f"问题：{'；'.join((quality or {}).get('issues') or [])}。"
+                    f"修改要求：{(quality or {}).get('rework_instructions','请根据质控意见修改后重新提交本阶段。')}"
+                )
+                append_log(
+                    task_id,
+                    f"[Lead Agent] 阶段质控未通过，打回当前阶段重做：{stage}（{stage_retry_counts[stage]}/{max_stage_review_retries}）",
+                )
+                previous_output = output
+                audit["stages"].append(stage_audit)
+                continue
+            else:
+                stage_retry_counts[stage] = 0
 
         # 工作流中的“验证/复核”正式阶段：可触发跨阶段打回
         if verifier_mode:
@@ -1918,6 +1988,15 @@ def create_task():
     task_brief = (request.form.get("task_brief") or "").strip()
     delivery_expectation = (request.form.get("delivery_expectation") or "").strip()
     project_dir = (request.form.get("project_dir") or "").strip()
+    raw_command = (request.form.get("command") or "").strip()
+
+    # 对高置信度“小说关键词/文包”任务自动路由到专用流水线，避免 custom_brief 只给策略不落地
+    text_hint = f"{task_brief}\n{delivery_expectation}"
+    auto_routed = False
+    if workflow_template == "custom_brief" and not raw_command:
+        if ("小说" in text_hint) and any(k in text_hint for k in ["关键词", "文包", "爬取", "采集"]):
+            workflow_template = "novel_multiagent"
+            auto_routed = True
 
     title = derive_title(request.form.get("title", ""), task_brief, workflow_template)
     if not title:
@@ -1947,7 +2026,7 @@ def create_task():
         if assignee == "Lead Agent" and (wf["default_assignee"] or "").strip():
             assignee = (wf["default_assignee"] or "Lead Agent").strip()
 
-    command = (request.form.get("command") or "").strip()
+    command = raw_command
     if not command:
         command = build_command_from_template(workflow_template, project_dir, task_brief)
 
@@ -1963,6 +2042,8 @@ def create_task():
 
     append_log(task_id, f"[SYSTEM] 任务创建：{title}")
     append_log(task_id, f"[SYSTEM] 工作流模板：{workflow_template}")
+    if auto_routed:
+        append_log(task_id, "[SYSTEM] 已根据任务内容自动路由到 novel_multiagent 专用流水线")
     if task_brief:
         append_log(task_id, f"[SYSTEM] 口语化任务描述：{task_brief[:1200]}")
     if delivery_expectation:
