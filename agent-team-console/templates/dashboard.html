@@ -7,391 +7,124 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
     :root {
-      --card-radius: 16px;
-      --soft-border: #e9ecf3;
-      --bg-page: #f4f6fb;
-      --text-main: #1f2a44;
+      --bg: #f7f7f8;
+      --card: #ffffff;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+      --brand: #111827;
     }
-    body { background: var(--bg-page); color: var(--text-main); }
-    .navbar-brand { font-weight: 700; letter-spacing: .2px; }
-    .top-pill { border: 1px solid rgba(255,255,255,.28); padding: .2rem .6rem; border-radius: 999px; }
-    .soft-card { border: 1px solid var(--soft-border); border-radius: var(--card-radius); box-shadow: 0 6px 22px rgba(16,24,40,.04); }
-    .soft-card .card-header { background: #fff; border-bottom: 1px solid var(--soft-border); font-weight: 600; }
-    .metric-value { font-size: 1.7rem; font-weight: 700; line-height: 1.1; }
-    .metric-label { color: #667085; font-size: .86rem; }
-    .metric-icon { font-size: 1.15rem; }
-    .phase-col { min-height: 420px; background: #fff; border-radius: 14px; border: 1px solid var(--soft-border); }
-    .phase-head { border-bottom: 1px solid var(--soft-border); padding: .65rem .75rem; font-weight: 600; }
-    .phase-body { padding: .65rem; max-height: 460px; overflow: auto; }
-    .task-mini { border: 1px solid #e7eaf3; border-radius: 12px; background: #fbfcff; padding: .6rem; margin-bottom: .55rem; }
-    .task-mini .title {
-      font-size: .93rem;
-      font-weight: 600;
-      line-height: 1.35;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+    body { background: var(--bg); color: var(--text); }
+    .shell { max-width: 1440px; margin: 0 auto; }
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 14px; }
+    .panel-head { padding: .8rem 1rem; border-bottom: 1px solid var(--border); font-weight: 600; }
+    .panel-body { padding: 1rem; }
+    .muted { color: var(--muted); }
+    .tiny { font-size: .82rem; }
+    .stat-num { font-size: 1.25rem; font-weight: 700; }
+    .status-chip {
+      border: 1px solid #d1d5db; border-radius: 999px; background: #fff;
+      padding: .2rem .55rem; font-size: .78rem; cursor: pointer;
     }
-    .muted-mini { color: #667085; font-size: .77rem; }
-    .meta-chip { border: 1px solid #e3e8f3; background: #fff; color: #475467; border-radius: 999px; padding: .12rem .5rem; font-size: .72rem; }
-    .task-title-link { color: #1f2a44; text-decoration: none; }
-    .task-title-link:hover { color: #0f172a; text-decoration: none; }
-    .summary-chip { background: #eef2ff; color: #3730a3; border-radius: 999px; padding: .2rem .55rem; font-size: .75rem; }
-    .sticky-block { position: sticky; top: 1rem; }
-    .table thead th { background: #fafbff; }
-    .view-toolbar { border: 1px dashed #d8deea; border-radius: 12px; padding: .75rem; background: #fff; }
-    .task-mini.hidden-by-filter, tr.hidden-by-filter { display: none !important; }
-    .filter-chip { border: 1px solid #d6ddf0; background:#fff; color:#344054; border-radius:999px; padding:.2rem .6rem; font-size:.78rem; cursor:pointer; }
-    .filter-chip.active { background:#1d4ed8; color:#fff; border-color:#1d4ed8; }
+    .status-chip.active { background: #111827; border-color: #111827; color: #fff; }
+    .task-row.hidden-by-filter { display: none !important; }
+    .sidebar-sticky { position: sticky; top: .85rem; }
+    .brand { font-weight: 700; letter-spacing: .2px; }
+    .quick-input { min-height: 120px; resize: vertical; }
+    .task-title-link { color: #111827; text-decoration: none; }
+    .task-title-link:hover { color: #000; text-decoration: underline; }
+    .topbar { border: 1px solid var(--border); border-radius: 12px; background:#fff; padding: .55rem .75rem; }
+    .top-pill { border:1px solid #e5e7eb; border-radius:999px; padding:.15rem .55rem; font-size:.78rem; }
   </style>
 </head>
 <body>
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-  <div class="container-fluid px-3">
-    <span class="navbar-brand">Agent Team 控制台</span>
-    <div class="d-flex align-items-center gap-2 text-white small flex-wrap">
-      <span class="top-pill">并发上限 {{ g.max_concurrent }}</span>
+<div class="container-fluid p-3 p-lg-4 shell">
+  <div class="topbar d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div class="d-flex align-items-center gap-2">
+      <span class="brand">Agent Team 控制台</span>
+      <span class="top-pill">并发 {{ g.max_concurrent }}</span>
       <span class="top-pill">活跃 {{ g.active_workers }}</span>
       <span class="top-pill">排队 {{ queue_count }}</span>
-      <button type="button" id="toggleRefreshBtn" class="btn btn-sm btn-outline-light py-0 px-2" onclick="toggleAutoRefresh()">自动刷新：开</button>
-      <a class="btn btn-sm btn-outline-light" href="{{ url_for('artifacts_page') }}">全局产物</a>
-      <a class="btn btn-sm btn-light" href="{{ url_for('logout') }}">退出</a>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button type="button" id="toggleRefreshBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleAutoRefresh()">自动刷新：开</button>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('artifacts_page') }}">全局产物</a>
+      <a class="btn btn-sm btn-dark" href="{{ url_for('logout') }}">退出</a>
     </div>
   </div>
-</nav>
 
-<div class="container-fluid px-3 px-lg-4 py-3 py-lg-4">
   {% with messages = get_flashed_messages() %}
     {% if messages %}
-      <div class="alert alert-info soft-card py-2">{{ messages[0] }}</div>
+      <div class="alert alert-info py-2">{{ messages[0] }}</div>
     {% endif %}
   {% endwith %}
 
-  <div class="row g-3 mb-3">
-    <div class="col-6 col-xl-3">
-      <div class="card soft-card h-100"><div class="card-body d-flex justify-content-between align-items-center">
-        <div><div class="metric-label">待办</div><div class="metric-value">{{ stats.pending }}</div></div><div class="metric-icon">📝</div>
-      </div></div>
-    </div>
-    <div class="col-6 col-xl-3">
-      <div class="card soft-card h-100"><div class="card-body d-flex justify-content-between align-items-center">
-        <div><div class="metric-label">执行中</div><div class="metric-value">{{ stats.running }}</div></div><div class="metric-icon">⚙️</div>
-      </div></div>
-    </div>
-    <div class="col-6 col-xl-3">
-      <div class="card soft-card h-100"><div class="card-body d-flex justify-content-between align-items-center">
-        <div><div class="metric-label">已完成</div><div class="metric-value">{{ stats.done }}</div></div><div class="metric-icon">✅</div>
-      </div></div>
-    </div>
-    <div class="col-6 col-xl-3">
-      <div class="card soft-card h-100"><div class="card-body d-flex justify-content-between align-items-center">
-        <div><div class="metric-label">需返工</div><div class="metric-value">{{ stats.failed }}</div></div><div class="metric-icon">🚧</div>
-      </div></div>
-    </div>
-  </div>
-
-  <div class="view-toolbar mb-3">
-    <div class="row g-2 align-items-center">
-      <div class="col-md-6">
-        <input id="taskSearchInput" class="form-control form-control-sm" placeholder="快速筛选任务：标题 / 角色 / 模板" />
-      </div>
-      <div class="col-md-6 d-flex gap-1 flex-wrap justify-content-md-end">
-        <button type="button" class="filter-chip active" data-status-filter="all" onclick="setStatusFilter('all', this)">全部</button>
-        <button type="button" class="filter-chip" data-status-filter="pending" onclick="setStatusFilter('pending', this)">待处理</button>
-        <button type="button" class="filter-chip" data-status-filter="running" onclick="setStatusFilter('running', this)">执行中</button>
-        <button type="button" class="filter-chip" data-status-filter="done" onclick="setStatusFilter('done', this)">待确认</button>
-        <button type="button" class="filter-chip" data-status-filter="failed" onclick="setStatusFilter('failed', this)">返工</button>
-      </div>
-    </div>
-  </div>
-
   <div class="row g-3">
-    <div class="col-12 col-xxl-8">
-      <div class="card soft-card mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span>新建任务（智能双角色）</span>
-          <span class="summary-chip">后端先评估，再按需调度前端/后端</span>
-        </div>
-        <div class="card-body">
-          <form method="post" action="{{ url_for('create_task') }}" enctype="multipart/form-data">
-            <div class="row g-2">
-              <div class="col-md-4">
-                <label class="form-label">任务模板</label>
-                <select class="form-select" name="workflow_template" id="workflow_template" onchange="onWorkflowChange()">
-                  {% for wf in workflows %}
-                    {% if wf.enabled == 1 %}
-                    <option value="{{ wf.code }}" data-default-assignee="{{ wf.default_assignee or '' }}" data-default-task-type="{{ wf.default_task_type or '' }}" {% if wf.code == 'intelligent_dual' %}selected{% endif %}>
-                      {{ wf.name }}（{{ wf.code }}）
-                    </option>
-                    {% endif %}
-                  {% endfor %}
-                </select>
-              </div>
-              <div class="col-md-8">
-                <label class="form-label">任务标题（可选）</label>
-                <input class="form-control" name="title" placeholder="可不填，系统会从任务描述自动提取" />
-              </div>
-            </div>
-
-            <div class="mt-2">
-              <label class="form-label">任务描述（必填）</label>
-              <textarea class="form-control" name="task_brief" rows="5" placeholder="直接用口语写你的目标、背景、约束、要求。" required></textarea>
-            </div>
-
-            <div class="row g-2 mt-1">
-              <div class="col-md-8">
-                <label class="form-label">期望交付（可选）</label>
-                <input class="form-control" name="delivery_expectation" placeholder="例如：一份结论摘要 + 可下载zip包 + 审计说明" />
-              </div>
-              <div class="col-md-4">
-                <label class="form-label">附件上传（可选）</label>
-                <input type="file" class="form-control" name="attachments" multiple>
-              </div>
-            </div>
-
-            <details class="mt-3 border rounded p-2 bg-light-subtle">
-              <summary><b>高级设置（可选）</b></summary>
-              <div class="row g-2 mt-2">
-                <div class="col-md-3">
-                  <label class="form-label">任务类型</label>
-                  <select class="form-select" name="task_type" title="任务类型">
-                    <option value="general" selected>general（通用）</option>
-                    <option value="backend">backend（研发）</option>
-                    <option value="research">research（调研）</option>
-                    <option value="ops">ops（运维）</option>
-                  </select>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label">执行角色</label>
-                  <select class="form-select" name="assignee" title="执行角色">
-                    {% for r in roles %}
-                      {% if r.enabled == 1 %}
-                      <option value="{{ r.code }}" {% if r.code == '@backend' %}selected{% endif %}>{{ r.name }}（{{ r.code }}）</option>
-                      {% endif %}
-                    {% endfor %}
-                  </select>
-                </div>
-                <div class="col-md-2">
-                  <label class="form-label">优先级</label>
-                  <select class="form-select" name="priority"><option>P0</option><option>P1</option><option selected>P2</option><option>P3</option></select>
-                </div>
-                <div class="col-md-4">
-                  <label class="form-label">项目路径</label>
-                  <input id="project_dir" class="form-control" name="project_dir" value="{{ g.workdir }}" placeholder="例如 /opt/agent-team-console" />
-                </div>
-              </div>
-
-              <div class="mt-2">
-                <label class="form-label">补充说明</label>
-                <input class="form-control" name="description" placeholder="补充验收标准、禁用项、风险点等" />
-              </div>
-
-              <div class="mt-2">
-                <label class="form-label">自定义命令（可选）</label>
-                <input id="command_input" class="form-control" name="command" placeholder="留空=自动用模板命令；如模板无命令则演示流程" />
-              </div>
-            </details>
-
-            <div class="form-text mt-2">如模板需要登录态（例如小红书），请上传 <code>xhs_cookies.json</code> 到当前任务附件。</div>
-            <button class="btn btn-primary mt-3">创建任务</button>
-          </form>
-        </div>
-      </div>
-
-      <div class="card soft-card mb-3">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span>业务阶段看板</span>
-          <span class="small text-muted">已精简为 3 个阶段（待处理 / 执行中 / 待确认）</span>
-        </div>
-        <div class="card-body">
-          <div class="row g-2">
-            {% for phase in phase_order %}
-            <div class="col-md-6 col-xl-4">
-              <div class="phase-col">
-                <div class="phase-head d-flex justify-content-between align-items-center">
-                  <span>{{ phase }}</span>
-                  <span class="badge text-bg-secondary">{{ tasks_by_phase.get(phase, [])|length }}</span>
-                </div>
-                <div class="phase-body">
-                  {% if tasks_by_phase.get(phase, [])|length == 0 %}
-                    <div class="text-muted small">暂无任务</div>
-                  {% else %}
-                    {% for t in tasks_by_phase.get(phase, []) %}
-                    <div class="task-mini" data-task-card="1" data-status="{{ t.status }}" data-search="{{ (t.title ~ ' ' ~ t.assignee ~ ' ' ~ (t.workflow_code or ''))|lower }}">
-                      <div class="title"><a class="task-title-link" href="{{ url_for('task_detail', task_id=t.id) }}">#{{ t.id }} {{ t.title }}</a></div>
-                      <div class="d-flex flex-wrap gap-1 mt-1">
-                        <span class="meta-chip">{{ t.assignee }}</span>
-                        <span class="meta-chip">{{ t.priority }}</span>
-                        {% if t.status == 'failed' %}<span class="badge bg-danger">返工</span>{% endif %}
-                      </div>
-                      <div class="muted-mini mt-1">更新时间：{{ t.updated_at|bjt }}</div>
-                      <div class="d-flex gap-1 flex-wrap mt-2">
-                        {% if t.status == 'running' %}
-                          <form method="post" action="{{ url_for('stop_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-danger">停止</button></form>
-                        {% elif t.status == 'done' %}
-                          <form method="post" action="{{ url_for('retry_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-secondary">重置</button></form>
-                          <form method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('确认删除任务 #{{ t.id }} 吗？将同时删除日志和该任务附件/产物。');"><button class="btn btn-sm btn-danger">删除</button></form>
-                        {% else %}
-                          <form method="post" action="{{ url_for('start_task_route', task_id=t.id) }}"><button class="btn btn-sm btn-outline-primary">启动</button></form>
-                          <form method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('确认删除任务 #{{ t.id }} 吗？将同时删除日志和该任务附件/产物。');"><button class="btn btn-sm btn-danger">删除</button></form>
-                        {% endif %}
-                      </div>
-                    </div>
-                    {% endfor %}
-                  {% endif %}
-                </div>
-              </div>
-            </div>
-            {% endfor %}
+    <div class="col-12 col-xl-3">
+      <div class="sidebar-sticky d-flex flex-column gap-3">
+        <div class="panel">
+          <div class="panel-head">任务概览</div>
+          <div class="panel-body">
+            <div class="d-flex justify-content-between align-items-center mb-2"><span class="muted tiny">待处理</span><span class="stat-num">{{ stats.pending }}</span></div>
+            <div class="d-flex justify-content-between align-items-center mb-2"><span class="muted tiny">执行中</span><span class="stat-num">{{ stats.running }}</span></div>
+            <div class="d-flex justify-content-between align-items-center mb-2"><span class="muted tiny">待确认</span><span class="stat-num">{{ stats.done }}</span></div>
+            <div class="d-flex justify-content-between align-items-center"><span class="muted tiny">返工</span><span class="stat-num">{{ stats.failed }}</span></div>
           </div>
         </div>
-      </div>
 
-      <details class="card soft-card mb-3">
-        <summary class="card-header" style="cursor:pointer;">技术明细表（高级）</summary>
-        <div class="card-body py-2 small text-muted">按技术字段查看全部任务（适合排障）。</div>
-        <div class="table-responsive">
-          <table class="table table-sm table-hover mb-0 align-middle">
-            <thead><tr><th>标题</th><th>类型</th><th>执行者</th><th>优先级</th><th>状态</th><th>返回码</th><th>更新时间</th><th>操作</th></tr></thead>
-            <tbody>
-            {% for t in tasks %}
-              <tr data-task-row="1" data-status="{{ t.status }}" data-search="{{ (t.title ~ ' ' ~ t.assignee ~ ' ' ~ (t.workflow_code or '') ~ ' ' ~ (t.task_type or ''))|lower }}">
-                <td><a class="task-title-link" href="{{ url_for('task_detail', task_id=t.id) }}">#{{ t.id }} {{ t.title }}</a></td>
-                <td>{{ t.task_type }}</td>
-                <td>{{ t.assignee }}</td>
-                <td>{{ t.priority }}</td>
-                <td>
-                  {% if t.status == 'running' %}<span class="badge bg-warning text-dark">运行中</span>
-                  {% elif t.status == 'done' %}<span class="badge bg-success">完成</span>
-                  {% elif t.status == 'failed' %}<span class="badge bg-danger">失败</span>
-                  {% else %}<span class="badge bg-secondary">待办</span>{% endif %}
-                </td>
-                <td>{{ t.return_code if t.return_code is not none else '-' }}</td>
-                <td>{{ t.updated_at|bjt }}</td>
-                <td class="d-flex gap-1 flex-wrap">
-                  <form method="post" action="{{ url_for('start_task_route', task_id=t.id) }}"><button class="btn btn-sm btn-outline-primary">启动</button></form>
-                  <form method="post" action="{{ url_for('stop_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-danger">停止</button></form>
-                  <form method="post" action="{{ url_for('retry_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-secondary">重置</button></form>
-                  <form method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('确认删除任务 #{{ t.id }} 吗？将同时删除日志和该任务附件/产物。');"><button class="btn btn-sm btn-danger">删除</button></form>
-                </td>
-              </tr>
-            {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </details>
-    </div>
-
-    <div class="col-12 col-xxl-4">
-      <div class="sticky-block">
-        <div class="card soft-card mb-3">
-          <div class="card-header">系统设置</div>
-          <div class="card-body">
+        <div class="panel">
+          <div class="panel-head">系统设置</div>
+          <div class="panel-body">
             <form class="row g-2 align-items-end" method="post" action="{{ url_for('set_concurrency') }}">
-              <div class="col-5">
-                <label class="form-label">并发上限</label>
-                <input type="number" class="form-control" min="1" max="16" name="max_concurrent" value="{{ g.max_concurrent }}" required>
+              <div class="col-6">
+                <label class="form-label tiny muted">并发上限</label>
+                <input type="number" class="form-control form-control-sm" min="1" max="16" name="max_concurrent" value="{{ g.max_concurrent }}" required>
               </div>
-              <div class="col-7 d-grid">
-                <button class="btn btn-primary">保存设置</button>
-              </div>
+              <div class="col-6 d-grid"><button class="btn btn-sm btn-dark">保存</button></div>
             </form>
-            <div class="small text-muted mt-2">建议 2-6；当前机器先用 4 更稳。</div>
           </div>
         </div>
 
-        <details class="card soft-card mb-3">
-          <summary class="card-header d-flex justify-content-between align-items-center" style="cursor:pointer; list-style:none;">
-            <span>全局角色中心（高级）</span>
-            <span class="small text-muted">默认收起，避免主界面臃肿</span>
-          </summary>
-          <div class="card-body small">
+        <details class="panel">
+          <summary class="panel-head" style="cursor:pointer; list-style:none;">角色中心（高级）</summary>
+          <div class="panel-body small">
             <div class="table-responsive mb-2">
-              <table class="table table-sm align-middle">
-                <thead><tr><th>角色</th><th>模型</th><th>API</th><th>状态</th><th></th></tr></thead>
+              <table class="table table-sm align-middle mb-0">
+                <thead><tr><th>角色</th><th>模型</th><th>API</th><th></th></tr></thead>
                 <tbody>
                   {% for r in roles %}
                   <tr>
                     <td>
-                      <div class="fw-semibold">{{ r.name }}</div>
-                      <div class="text-muted">{{ r.code }}</div>
+                      <div class="fw-semibold">{{ r.code }}</div>
+                      <div class="muted tiny">{{ r.name }}</div>
                     </td>
                     <td><code>{{ r.default_model or '-' }}</code></td>
+                    <td>{% if r.api_ready %}<span class="badge bg-success">已配置</span>{% else %}<span class="badge bg-warning text-dark">未配置</span>{% endif %}</td>
                     <td>
-                      {% if r.api_ready %}
-                        <span class="badge bg-success">已配置</span>
-                        <div class="text-muted">{{ r.api_key_masked }}</div>
-                      {% else %}
-                        <span class="badge bg-warning text-dark">未配置</span>
-                      {% endif %}
-                    </td>
-                    <td>{% if r.enabled == 1 %}<span class="badge bg-success">启用</span>{% else %}<span class="badge bg-secondary">停用</span>{% endif %}</td>
-                    <td>
-                      <form method="post" action="{{ url_for('toggle_role', role_id=r.id) }}" class="mb-1">
+                      <form method="post" action="{{ url_for('toggle_role', role_id=r.id) }}">
                         <button class="btn btn-sm btn-outline-secondary">{% if r.enabled == 1 %}停用{% else %}启用{% endif %}</button>
                       </form>
-                    </td>
-                  </tr>
-                  <tr>
-                    <td colspan="5" class="bg-light-subtle">
-                      <details>
-                        <summary>配置 {{ r.code }}（模型/API/提示词）</summary>
-                        <form class="row g-2 mt-1" method="post" action="{{ url_for('update_role_config', role_id=r.id) }}">
-                          <div class="col-md-4"><input class="form-control form-control-sm" name="default_model" value="{{ r.default_model or '' }}" placeholder="模型，例如 gpt-5.3-codex"></div>
-                          <div class="col-md-8"><input class="form-control form-control-sm" name="api_base" value="{{ r.api_base or '' }}" placeholder="API Base，例如 https://api.openai.com"></div>
-                          <div class="col-md-6"><input class="form-control form-control-sm" name="api_key" placeholder="API Key（留空=不修改）"></div>
-                          <div class="col-md-3"><input class="form-control form-control-sm" name="temperature" value="{{ r.temperature if r.temperature is not none else 0.3 }}" placeholder="temperature"></div>
-                          <div class="col-md-3"><input class="form-control form-control-sm" name="max_tokens" value="{{ r.max_tokens if r.max_tokens is not none else 1200 }}" placeholder="max_tokens"></div>
-                          <div class="col-12"><input class="form-control form-control-sm" name="system_prompt" value="{{ r.system_prompt or '' }}" placeholder="角色系统提示词（可选）"></div>
-                          <div class="col-12"><button class="btn btn-sm btn-primary">保存配置</button></div>
-                        </form>
-                      </details>
                     </td>
                   </tr>
                   {% endfor %}
                 </tbody>
               </table>
             </div>
-
-            <details>
-              <summary>新增角色</summary>
-              <form class="row g-2 mt-1" method="post" action="{{ url_for('create_role') }}">
-                <div class="col-6"><input class="form-control form-control-sm" name="code" placeholder="code，例如 @developer" required></div>
-                <div class="col-6"><input class="form-control form-control-sm" name="name" placeholder="名称，例如 开发 Agent" required></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="default_model" value="gpt-5.3-codex" placeholder="默认模型"></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="api_base" placeholder="API Base（可选）"></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="api_key" placeholder="API Key（可选）"></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="system_prompt" placeholder="系统提示词（可选）"></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="description" placeholder="职责描述（可选）"></div>
-                <div class="col-12"><button class="btn btn-sm btn-primary">创建角色</button></div>
-              </form>
-            </details>
           </div>
         </details>
 
-        <details class="card soft-card mb-3">
-          <summary class="card-header" style="cursor:pointer; list-style:none;">工作流模板中心（高级）</summary>
-          <div class="card-body small">
-            <div class="table-responsive mb-2">
-              <table class="table table-sm align-middle">
-                <thead><tr><th>模板</th><th>阶段</th><th>阶段→角色</th><th>默认角色</th><th></th></tr></thead>
+        <details class="panel">
+          <summary class="panel-head" style="cursor:pointer; list-style:none;">工作流中心（高级）</summary>
+          <div class="panel-body small">
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead><tr><th>模板</th><th>默认角色</th><th></th></tr></thead>
                 <tbody>
                   {% for wf in workflows %}
                   <tr>
                     <td>
-                      <div class="fw-semibold">{{ wf.name }}</div>
-                      <div class="text-muted">{{ wf.code }}</div>
-                    </td>
-                    <td>{{ ' → '.join(wf.stages) if wf.stages else '-' }}</td>
-                    <td>
-                      {% if wf.stage_roles %}
-                        {% for k,v in wf.stage_roles.items() %}
-                          <div class="text-muted">{{ k }} → {{ v }}</div>
-                        {% endfor %}
-                      {% else %}
-                        <span class="text-muted">-</span>
-                      {% endif %}
+                      <div class="fw-semibold">{{ wf.code }}</div>
+                      <div class="muted tiny">{{ wf.name }}</div>
                     </td>
                     <td>{{ wf.default_assignee or '-' }}</td>
                     <td>
@@ -404,43 +137,146 @@
                 </tbody>
               </table>
             </div>
+          </div>
+        </details>
+      </div>
+    </div>
 
-            <details>
-              <summary>新增工作流模板</summary>
-              <form class="row g-2 mt-1" method="post" action="{{ url_for('create_workflow') }}">
-                <div class="col-12"><input class="form-control form-control-sm" name="code" placeholder="code，例如 dev_test_verify" required></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="name" placeholder="模板名称" required></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="default_assignee" placeholder="默认角色，例如 @developer"></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="stages" placeholder="阶段，逗号分隔，如 开发,测试,验证,交付"></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="stage_roles" placeholder="阶段角色映射，如 开发:@developer,测试:@tester,验证:@verifier"></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="description" placeholder="模板描述（可选）"></div>
-                <div class="col-12"><input class="form-control form-control-sm" name="command_template" placeholder="命令模板（可选，支持 __PROJECT_DIR__）"></div>
-                <div class="col-8">
-                  <select class="form-select form-select-sm" name="default_task_type">
-                    <option value="general">general（通用）</option>
-                    <option value="backend">backend（研发）</option>
-                    <option value="research">research（调研）</option>
-                    <option value="ops">ops（运维）</option>
+    <div class="col-12 col-xl-9 d-flex flex-column gap-3">
+      <div class="panel" id="newTaskPanel">
+        <div class="panel-head d-flex justify-content-between align-items-center">
+          <span>新建任务</span>
+          <span class="tiny muted">智能双角色：后端先评估，再调度前端/后端</span>
+        </div>
+        <div class="panel-body">
+          <form method="post" action="{{ url_for('create_task') }}" enctype="multipart/form-data">
+            <div class="row g-2 mb-2">
+              <div class="col-md-5">
+                <label class="form-label tiny muted">任务模板</label>
+                <select class="form-select form-select-sm" name="workflow_template" id="workflow_template" onchange="onWorkflowChange()">
+                  {% for wf in workflows %}
+                    {% if wf.enabled == 1 %}
+                    <option value="{{ wf.code }}" data-default-assignee="{{ wf.default_assignee or '' }}" data-default-task-type="{{ wf.default_task_type or '' }}" {% if wf.code == 'intelligent_dual' %}selected{% endif %}>{{ wf.name }}（{{ wf.code }}）</option>
+                    {% endif %}
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-7">
+                <label class="form-label tiny muted">任务标题（可选）</label>
+                <input class="form-control form-control-sm" name="title" placeholder="可不填，系统会自动提取" />
+              </div>
+            </div>
+
+            <label class="form-label tiny muted">任务描述（必填）</label>
+            <textarea class="form-control quick-input" name="task_brief" placeholder="把目标、限制、完成标准一次性说清楚。" required></textarea>
+
+            <div class="row g-2 mt-2">
+              <div class="col-md-8">
+                <label class="form-label tiny muted">期望交付（可选）</label>
+                <input class="form-control form-control-sm" name="delivery_expectation" placeholder="例如：产物文件 + 结论摘要 + 风险说明" />
+              </div>
+              <div class="col-md-4">
+                <label class="form-label tiny muted">附件（可选）</label>
+                <input type="file" class="form-control form-control-sm" name="attachments" multiple>
+              </div>
+            </div>
+
+            <details class="mt-3 border rounded p-2 bg-light-subtle">
+              <summary><b>高级参数</b></summary>
+              <div class="row g-2 mt-2">
+                <div class="col-md-3">
+                  <label class="form-label tiny muted">任务类型</label>
+                  <select class="form-select form-select-sm" name="task_type">
+                    <option value="general" selected>general</option>
+                    <option value="backend">backend</option>
+                    <option value="research">research</option>
+                    <option value="ops">ops</option>
                   </select>
                 </div>
-                <div class="col-4 d-grid"><button class="btn btn-sm btn-primary">创建</button></div>
-              </form>
+                <div class="col-md-3">
+                  <label class="form-label tiny muted">执行角色</label>
+                  <select class="form-select form-select-sm" name="assignee">
+                    {% for r in roles %}
+                      {% if r.enabled == 1 %}
+                      <option value="{{ r.code }}" {% if r.code == '@backend' %}selected{% endif %}>{{ r.name }}（{{ r.code }}）</option>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label class="form-label tiny muted">优先级</label>
+                  <select class="form-select form-select-sm" name="priority"><option>P0</option><option>P1</option><option selected>P2</option><option>P3</option></select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label tiny muted">项目路径</label>
+                  <input id="project_dir" class="form-control form-control-sm" name="project_dir" value="{{ g.workdir }}" />
+                </div>
+              </div>
+              <div class="mt-2">
+                <label class="form-label tiny muted">补充说明</label>
+                <input class="form-control form-control-sm" name="description" placeholder="补充验收标准、禁用项、风险点" />
+              </div>
+              <div class="mt-2">
+                <label class="form-label tiny muted">自定义命令（可选）</label>
+                <input id="command_input" class="form-control form-control-sm" name="command" placeholder="留空=模板自动流程" />
+              </div>
             </details>
-          </div>
-        </details>
 
-        <details class="card soft-card">
-          <summary class="card-header" style="cursor:pointer; list-style:none;">操作提示</summary>
-          <div class="card-body small text-muted">
-            <ul class="mb-0">
-              <li><b>启动</b>：加入执行队列；并发满会自动排队。</li>
-              <li><b>停止</b>：中止任务并标记失败。</li>
-              <li><b>重置</b>：将 done/failed 恢复成 pending。</li>
-              <li><b>任务详情</b>：查看交付总览、下载产物、看实时日志。</li>
-              <li><b>真多Agent提醒</b>：若任务命令为空，会按工作流走角色独立会话；需先在“角色中心”配置每个角色的 API/模型。</li>
-            </ul>
+            <div class="d-flex justify-content-between align-items-center mt-3 flex-wrap gap-2">
+              <span class="tiny muted">如果是小红书类任务，请上传 <code>xhs_cookies.json</code>。</span>
+              <button class="btn btn-dark">创建任务</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span>任务列表</span>
+          <div class="d-flex gap-2 flex-wrap">
+            <input id="taskSearchInput" class="form-control form-control-sm" style="min-width:260px" placeholder="筛选：标题 / 角色 / 模板" />
+            <button type="button" class="status-chip active" onclick="setStatusFilter('all', this)">全部</button>
+            <button type="button" class="status-chip" onclick="setStatusFilter('pending', this)">待处理</button>
+            <button type="button" class="status-chip" onclick="setStatusFilter('running', this)">执行中</button>
+            <button type="button" class="status-chip" onclick="setStatusFilter('done', this)">待确认</button>
+            <button type="button" class="status-chip" onclick="setStatusFilter('failed', this)">返工</button>
           </div>
-        </details>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm table-hover mb-0 align-middle">
+            <thead><tr><th>任务</th><th>模板</th><th>角色</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
+            <tbody>
+            {% for t in tasks %}
+              <tr class="task-row" data-task-row="1" data-status="{{ t.status }}" data-search="{{ (t.title ~ ' ' ~ t.assignee ~ ' ' ~ (t.workflow_code or '') ~ ' ' ~ (t.task_type or ''))|lower }}">
+                <td>
+                  <a class="task-title-link" href="{{ url_for('task_detail', task_id=t.id) }}">#{{ t.id }} {{ t.title }}</a>
+                  <div class="tiny muted">{{ t.priority }} · {{ t.task_type }}</div>
+                </td>
+                <td><code>{{ t.workflow_code or '-' }}</code></td>
+                <td>{{ t.assignee }}</td>
+                <td>
+                  {% if t.status == 'running' %}<span class="badge bg-warning text-dark">运行中</span>
+                  {% elif t.status == 'done' %}<span class="badge bg-success">完成</span>
+                  {% elif t.status == 'failed' %}<span class="badge bg-danger">失败</span>
+                  {% else %}<span class="badge bg-secondary">待办</span>{% endif %}
+                </td>
+                <td>{{ t.updated_at|bjt }}</td>
+                <td class="d-flex gap-1 flex-wrap">
+                  {% if t.status == 'running' %}
+                    <form method="post" action="{{ url_for('stop_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-danger">停止</button></form>
+                  {% elif t.status == 'done' %}
+                    <form method="post" action="{{ url_for('retry_task', task_id=t.id) }}"><button class="btn btn-sm btn-outline-secondary">重置</button></form>
+                    <form method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('确认删除任务 #{{ t.id }} 吗？将同时删除日志和该任务附件/产物。');"><button class="btn btn-sm btn-danger">删除</button></form>
+                  {% else %}
+                    <form method="post" action="{{ url_for('start_task_route', task_id=t.id) }}"><button class="btn btn-sm btn-outline-primary">启动</button></form>
+                    <form method="post" action="{{ url_for('delete_task', task_id=t.id) }}" onsubmit="return confirm('确认删除任务 #{{ t.id }} 吗？将同时删除日志和该任务附件/产物。');"><button class="btn btn-sm btn-danger">删除</button></form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
@@ -459,35 +295,24 @@ function setDirty() {
 function toggleAutoRefresh() {
   autoRefreshEnabled = !autoRefreshEnabled;
   const btn = document.getElementById('toggleRefreshBtn');
-  if (btn) {
-    btn.textContent = autoRefreshEnabled ? '自动刷新：开' : '自动刷新：关';
-  }
+  if (btn) btn.textContent = autoRefreshEnabled ? '自动刷新：开' : '自动刷新：关';
 }
 
 function setStatusFilter(status, btnEl) {
   currentStatusFilter = status || 'all';
-  document.querySelectorAll('.filter-chip').forEach(chip => chip.classList.remove('active'));
+  document.querySelectorAll('.status-chip').forEach(chip => chip.classList.remove('active'));
   if (btnEl) btnEl.classList.add('active');
   applyTaskFilters();
 }
 
 function applyTaskFilters() {
-  const cards = document.querySelectorAll('[data-task-card="1"]');
   const rows = document.querySelectorAll('[data-task-row="1"]');
-
-  const match = (status, searchText) => {
-    const okStatus = (currentStatusFilter === 'all') || (status === currentStatusFilter);
-    const okSearch = !currentSearchKeyword || (searchText || '').includes(currentSearchKeyword);
-    return okStatus && okSearch;
-  };
-
-  cards.forEach(el => {
-    const ok = match(el.getAttribute('data-status') || '', (el.getAttribute('data-search') || '').toLowerCase());
-    el.classList.toggle('hidden-by-filter', !ok);
-  });
-  rows.forEach(el => {
-    const ok = match(el.getAttribute('data-status') || '', (el.getAttribute('data-search') || '').toLowerCase());
-    el.classList.toggle('hidden-by-filter', !ok);
+  rows.forEach((el) => {
+    const status = el.getAttribute('data-status') || '';
+    const text = (el.getAttribute('data-search') || '').toLowerCase();
+    const okStatus = currentStatusFilter === 'all' || status === currentStatusFilter;
+    const okSearch = !currentSearchKeyword || text.includes(currentSearchKeyword);
+    el.classList.toggle('hidden-by-filter', !(okStatus && okSearch));
   });
 }
 
@@ -503,28 +328,16 @@ function onWorkflowChange() {
   const defAssignee = opt?.getAttribute('data-default-assignee') || '';
   const defTaskType = opt?.getAttribute('data-default-task-type') || '';
 
-  if (defAssignee && assignee) {
-    assignee.value = defAssignee;
-  }
-  if (defTaskType && taskType) {
-    taskType.value = defTaskType;
-  }
+  if (defAssignee && assignee) assignee.value = defAssignee;
+  if (defTaskType && taskType) taskType.value = defTaskType;
 
   if (wf.value === 'intelligent_dual') {
     cmdInput.placeholder = '留空=由后端角色先评估，再按需调度前端/后端执行';
-    if (expectation && !expectation.value) {
-      expectation.value = '期望：明确评估结论、必要执行产物、最终交付摘要';
-    }
+    if (expectation && !expectation.value) expectation.value = '期望：明确评估结论、必要执行产物、最终交付摘要';
   } else if (wf.value === 'novel_multiagent') {
     cmdInput.placeholder = '留空即可：系统会自动生成小说多Agent流水线命令';
-    if (expectation && !expectation.value) {
-      expectation.value = '需要关键词报告、爆款标题模板、开头模板、压缩包交付';
-    }
   } else if (wf.value === 'xhs_virtual_keywords') {
     cmdInput.placeholder = '留空即可：系统会自动生成小红书关键词分析命令';
-    if (expectation && !expectation.value) {
-      expectation.value = '需要高频词报告（md/json）和可下载产物';
-    }
   } else {
     cmdInput.placeholder = '留空=按模板自动生成命令；如模板无命令则演示流程';
   }
@@ -534,8 +347,10 @@ function onWorkflowChange() {
 (function initAutoRefreshGuard() {
   const fields = document.querySelectorAll('input, select, textarea');
   fields.forEach((el) => {
-    el.addEventListener('input', setDirty);
-    el.addEventListener('change', setDirty);
+    if (el.id !== 'taskSearchInput') {
+      el.addEventListener('input', setDirty);
+      el.addEventListener('change', setDirty);
+    }
   });
 
   const searchInput = document.getElementById('taskSearchInput');
@@ -555,7 +370,7 @@ function onWorkflowChange() {
     const active = document.activeElement;
     if (active && active.closest && active.closest('form')) return;
     window.location.reload();
-  }, 7000);
+  }, 8000);
 })();
 </script>
 </body>
