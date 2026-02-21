@@ -265,6 +265,9 @@ def load_multiagent_summary(output_dir: str):
     role_seen = set()
     stage_tracks = []
 
+    intake_role = "-"
+    intake_model = "-"
+
     for s in data.get("stages") or []:
         role = s.get("role") or "-"
         if role not in role_seen:
@@ -295,17 +298,28 @@ def load_multiagent_summary(output_dir: str):
             track_status = "完成"
             reason = ""
 
+        stage_name = s.get("stage") or "-"
+        model_name = s.get("model") or "-"
+        if intake_role == "-" and any(k in stage_name for k in ["需求接收", "分发", "需求分析", "需求理解"]):
+            intake_role = role
+            intake_model = model_name
+
         stage_tracks.append(
             {
                 "executionNo": s.get("executionNo") or "-",
-                "stage": s.get("stage") or "-",
+                "stage": stage_name,
                 "role": role,
-                "model": s.get("model") or "-",
+                "model": model_name,
                 "reworkRound": s.get("reworkRound") or 0,
+                "duration_sec": s.get("durationSec"),
                 "status": track_status,
                 "reason": (reason or "")[:180],
             }
         )
+
+    if intake_role == "-" and stage_tracks:
+        intake_role = stage_tracks[0].get("role") or "-"
+        intake_model = stage_tracks[0].get("model") or "-"
 
     return {
         "workflow": data.get("workflow") or "-",
@@ -318,6 +332,8 @@ def load_multiagent_summary(output_dir: str):
         "quality_fail": quality_fail,
         "called_roles": called_roles,
         "stage_tracks": stage_tracks,
+        "intake_role": intake_role,
+        "intake_model": intake_model,
     }
 
 
@@ -1058,9 +1074,12 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
                 messages.append({"role": turn, "content": h["content"] or ""})
         messages.append({"role": "user", "content": user_prompt})
 
+        stage_started_at = now_str()
+        stage_t0 = time.perf_counter()
         save_role_message(task_id, role_code, stage, "user", user_prompt)
         output = call_role_llm(role, messages)
         save_role_message(task_id, role_code, stage, "assistant", output)
+        stage_duration_sec = round(time.perf_counter() - stage_t0, 2)
 
         execution_no += 1
         stage_file = os.path.join(
@@ -1080,6 +1099,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
             "role": role_code,
             "model": role["default_model"],
             "reworkRound": rework_round,
+            "startedAt": stage_started_at,
+            "durationSec": stage_duration_sec,
             "outputFile": os.path.basename(stage_file),
             "outputChars": len(output),
             "finishedAt": now_str(),
@@ -1188,7 +1209,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
         previous_output = output
         handoff_note = ""
         audit["stages"].append(stage_audit)
-        append_log(task_id, f"[{role_code}] 阶段完成，输出长度={len(output)}")
+        append_log(task_id, f"[{role_code}] 阶段完成，输出长度={len(output)}，耗时={stage_duration_sec}s")
         stage_idx += 1
 
     final_file = os.path.join(output_dir, "多Agent_最终交付.md")

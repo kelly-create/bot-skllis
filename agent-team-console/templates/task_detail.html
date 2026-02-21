@@ -110,6 +110,7 @@
           <div class="card-header">Lead 分发与复核轨迹（角色调用明细）</div>
           <div class="card-body small">
             <div class="mb-1">工作流：<b>{{ multiagent.workflow }}</b></div>
+            <div class="mb-1">本轮需求分析：<b>{{ multiagent.intake_role }}</b>（<code>{{ multiagent.intake_model }}</code>）</div>
             <div class="mb-1">步骤数：<b>{{ multiagent.steps }}</b> ｜ 返工：<b>{{ multiagent.rework_used }}/{{ multiagent.rework_max }}</b></div>
             <div class="mb-1">复核通过：<b>{{ multiagent.review_pass }}</b> ｜ 复核不通过：<b>{{ multiagent.review_fail }}</b></div>
             <div class="mb-2">阶段质控打回：<b>{{ multiagent.quality_fail }}</b></div>
@@ -139,7 +140,7 @@
             <div class="fw-semibold mb-1">阶段执行轨迹</div>
             <div class="table-responsive">
               <table class="table table-sm align-middle mb-0">
-                <thead><tr><th>步骤</th><th>阶段</th><th>角色</th><th>模型</th><th>状态</th></tr></thead>
+                <thead><tr><th>步骤</th><th>阶段</th><th>角色</th><th>模型</th><th>耗时(s)</th><th>状态</th></tr></thead>
                 <tbody>
                   {% for t in multiagent.stage_tracks %}
                   <tr>
@@ -147,6 +148,7 @@
                     <td>{{ t.stage }}</td>
                     <td>{{ t.role }}</td>
                     <td><code>{{ t.model }}</code></td>
+                    <td>{% if t.duration_sec is not none %}{{ t.duration_sec }}{% else %}-{% endif %}</td>
                     <td>
                       <div>{{ t.status }}</div>
                       {% if t.reason %}<div class="text-muted">{{ t.reason }}</div>{% endif %}
@@ -160,16 +162,7 @@
         </div>
         {% endif %}
 
-        <div class="card soft-card mb-3">
-          <div class="card-header">目录与环境变量</div>
-          <div class="card-body small">
-            <div class="mb-1">任务目录：<code>{{ base_dir }}</code></div>
-            <div class="mb-1">输入目录：<code>{{ input_dir }}</code></div>
-            <div class="mb-1">输出目录：<code>{{ output_dir }}</code></div>
-            <hr>
-            <div><code>$TASK_INPUT_DIR</code> / <code>$TASK_OUTPUT_DIR</code> / <code>$TASK_ARTIFACT_DIR</code></div>
-          </div>
-        </div>
+        {# 目录与环境变量卡片按用户要求隐藏 #}
 
         <div class="card soft-card">
           <div class="card-header">输入附件</div>
