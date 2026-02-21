@@ -107,23 +107,55 @@
 
         {% if multiagent %}
         <div class="card soft-card mb-3">
-          <div class="card-header">Lead 分发与复核轨迹</div>
+          <div class="card-header">Lead 分发与复核轨迹（角色调用明细）</div>
           <div class="card-body small">
             <div class="mb-1">工作流：<b>{{ multiagent.workflow }}</b></div>
             <div class="mb-1">步骤数：<b>{{ multiagent.steps }}</b> ｜ 返工：<b>{{ multiagent.rework_used }}/{{ multiagent.rework_max }}</b></div>
             <div class="mb-1">复核通过：<b>{{ multiagent.review_pass }}</b> ｜ 复核不通过：<b>{{ multiagent.review_fail }}</b></div>
             <div class="mb-2">阶段质控打回：<b>{{ multiagent.quality_fail }}</b></div>
 
+            <div class="fw-semibold mb-1">本次实际调用角色</div>
+            {% if multiagent.called_roles|length == 0 %}
+              <div class="text-muted">暂无</div>
+            {% else %}
+              <div class="d-flex flex-wrap gap-1 mb-2">
+                {% for r in multiagent.called_roles %}
+                  <span class="badge text-bg-light border">{{ r }}</span>
+                {% endfor %}
+              </div>
+            {% endif %}
+
             <div class="fw-semibold mb-1">动态分发结果</div>
             {% if multiagent.dispatch_items|length == 0 %}
               <div class="text-muted">本次未发生动态改写（沿用模板分配）</div>
             {% else %}
-              <ul class="mb-0 ps-3">
+              <ul class="mb-2 ps-3">
                 {% for d in multiagent.dispatch_items %}
                 <li>{{ d.stage }} → {{ d.role }}</li>
                 {% endfor %}
               </ul>
             {% endif %}
+
+            <div class="fw-semibold mb-1">阶段执行轨迹</div>
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead><tr><th>步骤</th><th>阶段</th><th>角色</th><th>模型</th><th>状态</th></tr></thead>
+                <tbody>
+                  {% for t in multiagent.stage_tracks %}
+                  <tr>
+                    <td>#{{ t.executionNo }}</td>
+                    <td>{{ t.stage }}</td>
+                    <td>{{ t.role }}</td>
+                    <td><code>{{ t.model }}</code></td>
+                    <td>
+                      <div>{{ t.status }}</div>
+                      {% if t.reason %}<div class="text-muted">{{ t.reason }}</div>{% endif %}
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
         {% endif %}

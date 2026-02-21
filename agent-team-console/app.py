@@ -261,16 +261,51 @@ def load_multiagent_summary(output_dir: str):
     review_pass = 0
     review_fail = 0
     quality_fail = 0
+    called_roles = []
+    role_seen = set()
+    stage_tracks = []
+
     for s in data.get("stages") or []:
-        rd = (s.get("reviewDecision") or {}).get("decision", "")
+        role = s.get("role") or "-"
+        if role not in role_seen:
+            role_seen.add(role)
+            called_roles.append(role)
+
+        rd_obj = s.get("reviewDecision") or {}
+        rd = rd_obj.get("decision", "")
         if rd == "PASS":
             review_pass += 1
         elif rd == "FAIL":
             review_fail += 1
 
-        qd = ((s.get("qualityGate") or {}).get("decision") or {}).get("decision", "")
+        q_obj = (s.get("qualityGate") or {}).get("decision") or {}
+        qd = q_obj.get("decision", "")
         if qd == "FAIL":
             quality_fail += 1
+
+        if rd:
+            track_status = f"复核{rd}"
+            reason = rd_obj.get("reason", "")
+            if rd == "FAIL" and rd_obj.get("send_back_role"):
+                reason = f"打回 {rd_obj.get('send_back_role')}｜{reason}"
+        elif qd:
+            track_status = f"质控{qd}"
+            reason = q_obj.get("reason", "")
+        else:
+            track_status = "完成"
+            reason = ""
+
+        stage_tracks.append(
+            {
+                "executionNo": s.get("executionNo") or "-",
+                "stage": s.get("stage") or "-",
+                "role": role,
+                "model": s.get("model") or "-",
+                "reworkRound": s.get("reworkRound") or 0,
+                "status": track_status,
+                "reason": (reason or "")[:180],
+            }
+        )
 
     return {
         "workflow": data.get("workflow") or "-",
@@ -281,6 +316,8 @@ def load_multiagent_summary(output_dir: str):
         "review_pass": review_pass,
         "review_fail": review_fail,
         "quality_fail": quality_fail,
+        "called_roles": called_roles,
+        "stage_tracks": stage_tracks,
     }
 
 
