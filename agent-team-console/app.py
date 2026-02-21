@@ -28,9 +28,9 @@ ARTIFACT_ROOT = os.getenv("ATC_ARTIFACT_ROOT", os.path.join(BASE_DIR, "artifacts
 ROLE_DEFAULT_API_BASE = os.getenv("ATC_ROLE_DEFAULT_API_BASE", "").strip()
 ROLE_DEFAULT_API_KEY = os.getenv("ATC_ROLE_DEFAULT_API_KEY", "").strip()
 ROLE_DEFAULT_TIMEOUT = int(os.getenv("ATC_ROLE_TIMEOUT_SECONDS", "180"))
-ROLE_MAX_REWORK_ROUNDS = max(0, min(5, int(os.getenv("ATC_MAX_REWORK_ROUNDS", "2"))))
-ROLE_STAGE_REVIEW_MAX_RETRIES = max(0, min(5, int(os.getenv("ATC_STAGE_REVIEW_MAX_RETRIES", "2"))))
-ROLE_MAX_TOOL_ROUNDS = max(1, min(12, int(os.getenv("ATC_ROLE_MAX_TOOL_ROUNDS", "6"))))
+ROLE_MAX_REWORK_ROUNDS = max(0, min(5, int(os.getenv("ATC_MAX_REWORK_ROUNDS", "5"))))
+ROLE_STAGE_REVIEW_MAX_RETRIES = max(0, min(5, int(os.getenv("ATC_STAGE_REVIEW_MAX_RETRIES", "5"))))
+ROLE_MAX_TOOL_ROUNDS = max(1, min(10, int(os.getenv("ATC_ROLE_MAX_TOOL_ROUNDS", "5"))))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 os.makedirs(ARTIFACT_ROOT, exist_ok=True)
@@ -538,8 +538,9 @@ def init_db():
         # 默认全局角色（创建一次，后续可在页面维护）
         default_roles = [
             ("Lead Agent", "Lead Agent", "任务总控与编排", "gpt-5.3-codex"),
-            ("@frontend", "前端 Agent", "前端页面、交互、可视化与体验优化", "MiniMax-M2.5"),
-            ("@backend", "后端 Agent", "后端业务、数据流、接口与自动化执行", "gpt-5.3-codex"),
+            ("frontend", "前端 Agent", "前端页面、交互、可视化与体验优化", "MiniMax-M2.5"),
+            ("backend", "后端 Agent", "后端业务、数据流、接口与自动化执行", "gpt-5.3-codex"),
+            ("reviewer", "复核 Agent", "按验收标准复核并给出打回意见", "gpt-5.3-codex"),
         ]
         for code, name, desc, model in default_roles:
             conn.execute(
@@ -553,8 +554,9 @@ def init_db():
         # 默认角色词（system prompt）
         role_prompts = {
             "Lead Agent": "你是总控角色。负责评估需求、制定执行计划、调度前后端角色、汇总最终交付。遇到阻塞时要先诊断再调整策略。",
-            "@frontend": "你是前端角色。负责页面结构、交互流程、可视化与可读性优化，按验收标准交付前端结果。",
-            "@backend": "你是后端角色。负责后端业务、数据/接口/脚本执行与故障排查。遇到反爬或失败时必须先诊断原因，再切换策略。",
+            "frontend": "你是前端角色。负责页面结构、交互流程、可视化与可读性优化，按验收标准交付前端结果。",
+            "backend": "你是后端角色。负责后端业务、数据/接口/脚本执行与故障排查。遇到反爬或失败时必须先诊断原因，再切换策略。",
+            "reviewer": "你是复核角色。只做验收复核，不替代实现。若不通过必须给出可执行的打回意见。",
         }
         for role_code, prompt in role_prompts.items():
             conn.execute(
@@ -567,7 +569,7 @@ def init_db():
                 (prompt, now_str(), role_code),
             )
 
-        # 三核心角色默认模型（允许在角色中心手动覆盖）
+        # 角色默认模型（允许在角色中心手动覆盖）
         conn.execute(
             """
             UPDATE roles
@@ -582,7 +584,7 @@ def init_db():
             UPDATE roles
             SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'MiniMax-M2.5' ELSE default_model END,
                 updated_at=?
-            WHERE code='@frontend'
+            WHERE code='frontend'
             """,
             (now_str(),),
         )
@@ -591,7 +593,16 @@ def init_db():
             UPDATE roles
             SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'gpt-5.3-codex' ELSE default_model END,
                 updated_at=?
-            WHERE code='@backend'
+            WHERE code='backend'
+            """,
+            (now_str(),),
+        )
+        conn.execute(
+            """
+            UPDATE roles
+            SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'gpt-5.3-codex' ELSE default_model END,
+                updated_at=?
+            WHERE code='reviewer'
             """,
             (now_str(),),
         )
@@ -620,9 +631,9 @@ def init_db():
         default_workflows = [
             (
                 "intelligent_dual",
-                "智能双角色（前端+后端+Lead）",
-                "Lead 先评估并分配执行计划，前后端按需协作并独立调用工具执行",
-                json.dumps(["需求评估与分配", "前端实现", "后端实现", "联合交付"], ensure_ascii=False),
+                "智能三角色（Lead+前端+后端+复核）",
+                "Lead先评估并分配，前后端执行，复核失败会给意见并打回",
+                json.dumps(["需求评估与分配", "前端实现", "后端实现", "复核", "联合交付"], ensure_ascii=False),
                 "general",
                 "Lead Agent",
                 "",
@@ -639,7 +650,7 @@ def init_db():
             )
 
         stage_role_defaults = {
-            "intelligent_dual": {"需求评估与分配": "Lead Agent", "前端实现": "@frontend", "后端实现": "@backend", "联合交付": "Lead Agent"},
+            "intelligent_dual": {"需求评估与分配": "Lead Agent", "前端实现": "frontend", "后端实现": "backend", "复核": "reviewer", "联合交付": "Lead Agent"},
         }
         for wf_code, mapping in stage_role_defaults.items():
             conn.execute(
@@ -653,7 +664,7 @@ def init_db():
             )
 
         workflow_stage_defaults = {
-            "intelligent_dual": ["需求评估与分配", "前端实现", "后端实现", "联合交付"],
+            "intelligent_dual": ["需求评估与分配", "前端实现", "后端实现", "复核", "联合交付"],
         }
         workflow_assignee_defaults = {
             "intelligent_dual": "Lead Agent",
@@ -735,6 +746,17 @@ def get_role_by_code(code: str):
         return None
     with db_conn() as conn:
         return conn.execute("SELECT * FROM roles WHERE code=?", (code,)).fetchone()
+
+
+def get_reviewer_role():
+    # 新架构优先 reviewer，兼容旧 @verifier
+    r = get_role_by_code("reviewer")
+    if r:
+        return r, "reviewer"
+    r = get_role_by_code("@verifier")
+    if r:
+        return r, "@verifier"
+    return None, "reviewer"
 
 
 def mask_secret(secret: str) -> str:
@@ -950,7 +972,7 @@ def call_role_llm(role, messages):
 def is_verifier_stage(stage: str, role_code: str) -> bool:
     s = (stage or "")
     r = (role_code or "")
-    return r == "@verifier" or any(k in s for k in ["验证", "复核", "验收", "review"])
+    return r in ("reviewer", "@verifier") or any(k in s for k in ["验证", "复核", "验收", "review"])
 
 
 def parse_verifier_feedback(text: str) -> dict:
@@ -1320,7 +1342,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             stage_instruction = (
                 "你只负责当前复核阶段，不负责开发实现。请严格依据任务要求判定是否通过。"
                 "必须返回 JSON："
-                '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"@developer 或 @tester","rework_instructions":"..."}'
+                '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"frontend 或 backend","rework_instructions":"..."}'
                 "。如果通过，issues可为空，send_back_role可空。"
             )
         elif lead_dispatch_mode:
@@ -1329,7 +1351,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 "请输出“分发清单”，至少包含：角色、该角色目标、输入、输出、验收标准。"
                 "不要替执行角色完成实现，只做评估、拆解和分发。"
                 "并在结尾附上 JSON（assignments + active_stages）用于动态分发，例如："
-                '{"assignments":[{"stage":"前端实现","role":"@frontend"},{"stage":"后端实现","role":"@backend"}],"active_stages":["前端实现","后端实现","联合交付"],"skip_stages":[]}'
+                '{"assignments":[{"stage":"前端实现","role":"frontend"},{"stage":"后端实现","role":"backend"}],"active_stages":["前端实现","后端实现","复核","联合交付"],"skip_stages":[]}'
                 "。stage 必须是现有阶段名，role 必须是可用角色 code。"
                 "若某阶段本轮不需要执行，请明确写入 skip_stages。"
             )
@@ -1454,7 +1476,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             elif not dynamic:
                 append_log(task_id, "[Lead Agent] 未解析到有效动态分发JSON，沿用工作流默认分配")
 
-        # 每个执行角色完成后都做阶段质控（由 @verifier 复核）
+        # 每个执行角色完成后都做阶段质控（由 reviewer 复核）
         if (not verifier_mode) and (not lead_dispatch_mode):
             auto_fail_reason = ""
             if tool_events and all(int(e.get("rc", 1)) != 0 for e in tool_events):
@@ -1475,9 +1497,9 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                     "rework_instructions": "请通过 run_command 真实执行并产出文件到 $TASK_OUTPUT_DIR，再提交 final。",
                 }
                 stage_audit["qualityGate"] = {"raw": "", "decision": quality, "autoRule": "artifact_or_tool_guard"}
-                append_log(task_id, f"[@verifier] 阶段质控结论：FAIL | stage={stage} | reason={auto_fail_reason}")
+                append_log(task_id, f"[reviewer] 阶段质控结论：FAIL | stage={stage} | reason={auto_fail_reason}")
             else:
-                reviewer_role = get_role_by_code("@verifier")
+                reviewer_role, reviewer_code = get_reviewer_role()
                 if reviewer_role and int(reviewer_role["enabled"] or 0) == 1:
                     review_stage = f"{stage}-阶段质控"
                     review_prompt = (
@@ -1499,16 +1521,16 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                         },
                         {"role": "user", "content": review_prompt},
                     ]
-                    save_role_message(task_id, "@verifier", review_stage, "user", review_prompt)
+                    save_role_message(task_id, reviewer_code, review_stage, "user", review_prompt)
                     review_output = call_role_llm(reviewer_role, review_msgs)
-                    save_role_message(task_id, "@verifier", review_stage, "assistant", review_output)
+                    save_role_message(task_id, reviewer_code, review_stage, "assistant", review_output)
                     quality = parse_verifier_feedback(review_output)
                     stage_audit["qualityGate"] = {"raw": review_output, "decision": quality}
 
                     q_dec = quality.get("decision", "UNKNOWN")
-                    append_log(task_id, f"[@verifier] 阶段质控结论：{q_dec} | stage={stage} | reason={quality.get('reason','')[:120]}")
+                    append_log(task_id, f"[{reviewer_code}] 阶段质控结论：{q_dec} | stage={stage} | reason={quality.get('reason','')[:120]}")
                 else:
-                    quality = {"decision": "SKIP", "reason": "@verifier不可用，跳过阶段质控"}
+                    quality = {"decision": "SKIP", "reason": "reviewer不可用，跳过阶段质控"}
                     stage_audit["qualityGate"] = {"decision": quality}
 
             q_dec = (quality or {}).get("decision", "UNKNOWN")
@@ -2034,7 +2056,7 @@ def derive_title(title_raw: str, brief: str, template_name: str) -> str:
     if brief_line:
         return (brief_line[:36] + "...") if len(brief_line) > 36 else brief_line
     mapping = {
-        "intelligent_dual": "智能双角色任务",
+        "intelligent_dual": "智能三角色任务",
         "novel_multiagent": "小说类目爆款文包任务",
         "xhs_virtual_keywords": "小红书高频词任务",
         "custom_brief": "口语化任务",
@@ -2114,7 +2136,7 @@ def create_task():
     if wf:
         if task_type == "general" and (wf["default_task_type"] or "").strip():
             task_type = (wf["default_task_type"] or "general").strip()
-        if assignee in ("", "Lead Agent", "@backend") and (wf["default_assignee"] or "").strip():
+        if assignee in ("", "Lead Agent", "backend") and (wf["default_assignee"] or "").strip():
             assignee = (wf["default_assignee"] or "Lead Agent").strip()
 
     command = raw_command
