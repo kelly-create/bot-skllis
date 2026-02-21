@@ -12,6 +12,7 @@ import argparse
 import asyncio
 import json
 import os
+import random
 import re
 import sys
 from collections import Counter
@@ -47,6 +48,18 @@ RISK_TERMS = [
     "验证码",
     "验证",
     "访问受限",
+]
+
+THROTTLE_TERMS = [
+    "请求太频繁",
+    "请稍后再试",
+    "Refresh",
+    "Feedback",
+    "account security",
+    "Scan with logged-in",
+    "QR code expires",
+    "扫码",
+    "校验",
 ]
 
 NOISE_TERMS = {
@@ -105,6 +118,10 @@ def parse_args():
     p.add_argument("--out-md", default=os.path.join(os.getenv("TASK_OUTPUT_DIR", "."), "xhs_virtual_keywords.md"))
     p.add_argument("--out-json", default=os.path.join(os.getenv("TASK_OUTPUT_DIR", "."), "xhs_virtual_keywords.json"))
     p.add_argument("--headful", action="store_true", help="启用有界面浏览器")
+    p.add_argument("--kw-delay-min", type=float, default=1.2, help="关键词间最小等待秒数")
+    p.add_argument("--kw-delay-max", type=float, default=2.8, help="关键词间最大等待秒数")
+    p.add_argument("--retry-on-throttle", type=int, default=1, help="命中频控页时每个关键词额外重试次数")
+    p.add_argument("--cooldown-on-throttle", type=float, default=25.0, help="命中频控后的冷却秒数")
     return p.parse_args()
 
 
@@ -117,6 +134,17 @@ def is_risk_text(text: str) -> bool:
             hit += 1
     # 命中多个风控词，判定为无效页
     return hit >= 2
+
+
+def is_throttled_text(text: str) -> bool:
+    t = text or ""
+    if not t:
+        return False
+    hits = 0
+    for k in THROTTLE_TERMS:
+        if k in t:
+            hits += 1
+    return hits >= 2
 
 
 def sanitize_text(text: str) -> str:
@@ -289,7 +317,19 @@ def extract_related_keywords(text: str, max_n: int = 3, domain: str = "general")
     return out[:max_n]
 
 
-async def crawl_keywords(keywords, scrolls=5, headful=False, cookie_file=None, auto_related=0, max_keywords=30, domain="general"):
+async def crawl_keywords(
+    keywords,
+    scrolls=5,
+    headful=False,
+    cookie_file=None,
+    auto_related=0,
+    max_keywords=30,
+    domain="general",
+    kw_delay_min=1.2,
+    kw_delay_max=2.8,
+    retry_on_throttle=1,
+    cooldown_on_throttle=25.0,
+):
     try:
         from playwright.async_api import async_playwright
     except Exception as e:
@@ -326,40 +366,57 @@ async def crawl_keywords(keywords, scrolls=5, headful=False, cookie_file=None, a
 
             url = f"https://www.xiaohongshu.com/search_result?keyword={quote(kw)}&source=web_explore_feed"
             print(f"[INFO] 抓取关键词: {kw}")
-            item = {"keyword": kw, "url": url, "text": "", "blocked": False, "error": None, "related": []}
-            try:
-                await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                await asyncio.sleep(4)
+            item = {"keyword": kw, "url": url, "text": "", "text_raw": "", "blocked": False, "error": None, "related": []}
 
-                for _ in range(max(0, scrolls)):
-                    try:
-                        await page.evaluate("window.scrollBy(0, 800)")
-                        await asyncio.sleep(1.2)
-                    except Exception:
-                        await asyncio.sleep(1.5)
+            max_try = max(0, int(retry_on_throttle)) + 1
+            for attempt in range(1, max_try + 1):
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                    await asyncio.sleep(3.5 + random.uniform(0.2, 1.4))
 
-                body = await page.inner_text("body")
-                body = (body or "")[:300000]
-                item["text_raw"] = body
-                if is_risk_text(body):
-                    item["blocked"] = True
-                    print(f"[WARN] 关键词[{kw}] 命中风控/验证页面，已标记为无效采样")
+                    for _ in range(max(0, scrolls)):
+                        try:
+                            await page.evaluate("window.scrollBy(0, 800)")
+                            await asyncio.sleep(1.0 + random.uniform(0.2, 1.5))
+                        except Exception:
+                            await asyncio.sleep(1.5 + random.uniform(0.2, 1.0))
 
-                item["text"] = sanitize_text(body)
+                    body = await page.inner_text("body")
+                    body = (body or "")[:300000]
+                    item["text_raw"] = body
 
-                if auto_related > 0 and not item["blocked"]:
-                    rel = extract_related_keywords(body, max_n=auto_related, domain=domain)
-                    item["related"] = rel
-                    for r in rel:
-                        if r not in seen and r not in queue and len(seen) + len(queue) < max_keywords:
-                            queue.append(r)
-                    if rel:
-                        print(f"[INFO] 关键词[{kw}] 自动扩展相关词: {', '.join(rel)}")
-            except Exception as e:
-                item["error"] = str(e)
-                print(f"[ERROR] 关键词[{kw}] 抓取失败: {e}")
+                    risk_hit = is_risk_text(body)
+                    throttle_hit = is_throttled_text(body)
+
+                    if throttle_hit and attempt < max_try:
+                        cooldown = float(cooldown_on_throttle) * attempt
+                        print(f"[WARN] 关键词[{kw}] 命中频控页（第{attempt}/{max_try}次），冷却 {cooldown:.1f}s 后重试")
+                        await asyncio.sleep(max(3.0, cooldown))
+                        continue
+
+                    if risk_hit or throttle_hit:
+                        item["blocked"] = True
+                        print(f"[WARN] 关键词[{kw}] 命中风控/频控页面，已标记为无效采样")
+
+                    item["text"] = sanitize_text(body)
+
+                    if auto_related > 0 and not item["blocked"]:
+                        rel = extract_related_keywords(body, max_n=auto_related, domain=domain)
+                        item["related"] = rel
+                        for r in rel:
+                            if r not in seen and r not in queue and len(seen) + len(queue) < max_keywords:
+                                queue.append(r)
+                        if rel:
+                            print(f"[INFO] 关键词[{kw}] 自动扩展相关词: {', '.join(rel)}")
+                    break
+                except Exception as e:
+                    item["error"] = str(e)
+                    print(f"[ERROR] 关键词[{kw}] 抓取失败: {e}")
+                    if attempt < max_try:
+                        await asyncio.sleep(2.0 + random.uniform(0.5, 2.0))
 
             results.append(item)
+            await asyncio.sleep(max(0.2, random.uniform(float(kw_delay_min), float(kw_delay_max))))
 
         await browser.close()
 
@@ -372,11 +429,16 @@ def build_report(raw_items, max_top=80, domain="general"):
     usable_sources = 0
     recent_7d_sources = 0
     blocked_sources = 0
+    throttle_sources = 0
 
     for item in raw_items:
         txt = item.get("text", "") or ""
+        raw = item.get("text_raw", "") or ""
         blocked = bool(item.get("blocked"))
         err = item.get("error")
+
+        if is_throttled_text(raw):
+            throttle_sources += 1
 
         if blocked:
             blocked_sources += 1
@@ -388,7 +450,7 @@ def build_report(raw_items, max_top=80, domain="general"):
             continue
 
         usable_sources += 1
-        if has_recent_7d_signal((item.get("text_raw") or "") + "\n" + txt):
+        if has_recent_7d_signal(raw + "\n" + txt):
             recent_7d_sources += 1
         total_chars += len(txt)
         for w in extract_words(txt, domain=domain):
@@ -409,6 +471,7 @@ def build_report(raw_items, max_top=80, domain="general"):
         "usableSourceCount": usable_sources,
         "recent7dSourceCount": recent_7d_sources,
         "blockedSourceCount": blocked_sources,
+        "throttleSourceCount": throttle_sources,
         "totalChars": total_chars,
         "domain": domain,
         "domainTop20HitRatio": round(domain_ratio, 4),
@@ -432,6 +495,7 @@ def write_outputs(report, raw_items, out_md, out_json):
     lines.append(f"- 有效采样源：{report['usableSourceCount']}")
     lines.append(f"- 最近7天采样源：{report.get('recent7dSourceCount', 0)}")
     lines.append(f"- 风控/拦截源：{report['blockedSourceCount']}")
+    lines.append(f"- 频控信号源：{report.get('throttleSourceCount', 0)}")
     lines.append(f"- 有效文本总长度：{report['totalChars']}")
     lines.append(f"- 领域命中率(top20)：{report.get('domainTop20HitRatio', 0)}\n")
 
@@ -475,6 +539,10 @@ def main():
             auto_related=args.auto_related,
             max_keywords=args.max_keywords,
             domain=args.domain,
+            kw_delay_min=args.kw_delay_min,
+            kw_delay_max=args.kw_delay_max,
+            retry_on_throttle=args.retry_on_throttle,
+            cooldown_on_throttle=args.cooldown_on_throttle,
         )
     )
     report = build_report(raw_items, max_top=args.max_top, domain=args.domain)

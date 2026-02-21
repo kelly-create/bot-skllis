@@ -169,9 +169,9 @@ def main():
         sys.exit(2)
 
     rounds = [
-        {"scrolls": 4, "auto_related": 1, "max_keywords": 16},
-        {"scrolls": 5, "auto_related": 1, "max_keywords": 20},
-        {"scrolls": 6, "auto_related": 0, "max_keywords": 12},
+        {"scrolls": 4, "auto_related": 1, "max_keywords": 16, "kw_delay_min": 1.2, "kw_delay_max": 2.8, "retry_on_throttle": 1, "cooldown_on_throttle": 25},
+        {"scrolls": 5, "auto_related": 1, "max_keywords": 20, "kw_delay_min": 1.8, "kw_delay_max": 4.5, "retry_on_throttle": 1, "cooldown_on_throttle": 35},
+        {"scrolls": 6, "auto_related": 0, "max_keywords": 12, "kw_delay_min": 2.5, "kw_delay_max": 6.0, "retry_on_throttle": 2, "cooldown_on_throttle": 45},
     ]
     rounds = rounds[: max(1, args.max_rounds)]
 
@@ -197,6 +197,8 @@ def main():
             f"--keywords '{args.keywords}' "
             f"--cookie-file '{args.cookie_file}' "
             f"--scrolls {cfg['scrolls']} --auto-related {cfg['auto_related']} --max-keywords {cfg['max_keywords']} "
+            f"--kw-delay-min {cfg.get('kw_delay_min', 1.2)} --kw-delay-max {cfg.get('kw_delay_max', 2.8)} "
+            f"--retry-on-throttle {cfg.get('retry_on_throttle', 1)} --cooldown-on-throttle {cfg.get('cooldown_on_throttle', 25)} "
             "--domain novel --strict "
             f"--min-usable {args.min_usable} --min-domain-ratio {args.min_domain_ratio} --min-recent-7d {args.min_recent_7d} "
             f"--out-md '{out_md}' --out-json '{out_json}'"
@@ -213,6 +215,8 @@ def main():
 
         usable = int(report.get("usableSourceCount") or 0)
         recent_7d = int(report.get("recent7dSourceCount") or 0)
+        throttle_sources = int(report.get("throttleSourceCount") or 0)
+        source_count = int(report.get("sourceCount") or 0)
         domain_ratio = float(report.get("domainTop20HitRatio") or 0.0)
         noise_ratio = compute_noise_ratio(top_words, n=20)
 
@@ -221,13 +225,15 @@ def main():
             "rc": rc,
             "usable": usable,
             "recent7d": recent_7d,
+            "throttleSources": throttle_sources,
+            "sourceCount": source_count,
             "domainRatio": domain_ratio,
             "noiseRatioTop20": round(noise_ratio, 4),
             "outputJson": out_json,
         }
         audit["rounds"].append(round_stat)
 
-        log("Reviewer Agent", f"第{idx}轮复核: usable={usable}, recent7d={recent_7d}, domainRatio={domain_ratio}, noiseRatio={noise_ratio:.3f}")
+        log("Reviewer Agent", f"第{idx}轮复核: usable={usable}, recent7d={recent_7d}, throttle={throttle_sources}/{max(1,source_count)}, domainRatio={domain_ratio}, noiseRatio={noise_ratio:.3f}")
 
         pass_ok = (
             usable >= args.min_usable
@@ -243,6 +249,18 @@ def main():
             audit["decision"] = {"round": idx, "result": "pass"}
             log("Reviewer Agent", f"第{idx}轮通过复核，进入文包生成")
             break
+
+        # 若命中频控明显，下一轮自动进入“反拦截模式”（降速+冷却+禁扩词）
+        throttle_ratio = (throttle_sources / max(1, source_count)) if source_count else 0.0
+        if idx < len(rounds) and (throttle_ratio >= 0.4 or usable < max(2, args.min_usable // 2)):
+            nxt = rounds[idx]
+            nxt["auto_related"] = 0
+            nxt["max_keywords"] = min(int(nxt.get("max_keywords", 12)), 12)
+            nxt["kw_delay_min"] = max(float(nxt.get("kw_delay_min", 1.2)), 3.0)
+            nxt["kw_delay_max"] = max(float(nxt.get("kw_delay_max", 2.8)), 7.0)
+            nxt["retry_on_throttle"] = max(int(nxt.get("retry_on_throttle", 1)), 2)
+            nxt["cooldown_on_throttle"] = max(float(nxt.get("cooldown_on_throttle", 25)), 45.0)
+            log("Lead Agent", f"第{idx}轮疑似频控，已切换下一轮反拦截策略: {nxt}")
 
         # 保存当前最优候选（至少有数据）
         if selected_report is None and usable > 0:
