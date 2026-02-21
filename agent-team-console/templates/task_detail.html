@@ -105,6 +105,29 @@
           </div>
         </div>
 
+        {% if multiagent %}
+        <div class="card soft-card mb-3">
+          <div class="card-header">Lead 分发与复核轨迹</div>
+          <div class="card-body small">
+            <div class="mb-1">工作流：<b>{{ multiagent.workflow }}</b></div>
+            <div class="mb-1">步骤数：<b>{{ multiagent.steps }}</b> ｜ 返工：<b>{{ multiagent.rework_used }}/{{ multiagent.rework_max }}</b></div>
+            <div class="mb-1">复核通过：<b>{{ multiagent.review_pass }}</b> ｜ 复核不通过：<b>{{ multiagent.review_fail }}</b></div>
+            <div class="mb-2">阶段质控打回：<b>{{ multiagent.quality_fail }}</b></div>
+
+            <div class="fw-semibold mb-1">动态分发结果</div>
+            {% if multiagent.dispatch_items|length == 0 %}
+              <div class="text-muted">本次未发生动态改写（沿用模板分配）</div>
+            {% else %}
+              <ul class="mb-0 ps-3">
+                {% for d in multiagent.dispatch_items %}
+                <li>{{ d.stage }} → {{ d.role }}</li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+
         <div class="card soft-card mb-3">
           <div class="card-header">目录与环境变量</div>
           <div class="card-body small">

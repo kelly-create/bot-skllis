@@ -245,6 +245,45 @@ def build_delivery_overview(task, output_files, logs):
     }
 
 
+def load_multiagent_summary(output_dir: str):
+    audit_path = os.path.join(output_dir, "多Agent_会话审计.json")
+    if not os.path.isfile(audit_path):
+        return None
+
+    try:
+        data = json.load(open(audit_path, "r", encoding="utf-8"))
+    except Exception:
+        return None
+
+    dynamic = data.get("dynamicAssignments") or {}
+    dispatch_items = [{"stage": k, "role": v} for k, v in dynamic.items()]
+
+    review_pass = 0
+    review_fail = 0
+    quality_fail = 0
+    for s in data.get("stages") or []:
+        rd = (s.get("reviewDecision") or {}).get("decision", "")
+        if rd == "PASS":
+            review_pass += 1
+        elif rd == "FAIL":
+            review_fail += 1
+
+        qd = ((s.get("qualityGate") or {}).get("decision") or {}).get("decision", "")
+        if qd == "FAIL":
+            quality_fail += 1
+
+    return {
+        "workflow": data.get("workflow") or "-",
+        "steps": len(data.get("stages") or []),
+        "rework_used": data.get("reworkRoundsUsed") or 0,
+        "rework_max": data.get("maxReworkRounds") or 0,
+        "dispatch_items": dispatch_items,
+        "review_pass": review_pass,
+        "review_fail": review_fail,
+        "quality_fail": quality_fail,
+    }
+
+
 def safe_join_under(root: str, rel_path: str):
     safe_full = os.path.realpath(os.path.join(root, rel_path))
     root_real = os.path.realpath(root)
@@ -1813,12 +1852,14 @@ def task_detail(task_id: int):
     input_files = list_task_files(task_id, "input")
     output_files = list_task_files(task_id, "output")
     delivery = build_delivery_overview(task, output_files, logs)
+    multiagent = load_multiagent_summary(output_dir)
 
     return render_template(
         "task_detail.html",
         task=task,
         logs=logs,
         delivery=delivery,
+        multiagent=multiagent,
         base_dir=base,
         input_dir=input_dir,
         output_dir=output_dir,
