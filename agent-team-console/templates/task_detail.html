@@ -89,6 +89,21 @@
               <div class="small mt-2"><span class="text-muted">最新日志：</span><code>{{ delivery.latest_line }}</code></div>
             {% endif %}
 
+            {% if delivery.failure %}
+            <div class="alert alert-danger mt-2 mb-2 py-2">
+              <div><b>失败原因：</b>{{ delivery.failure.reason }}</div>
+              {% if delivery.failure.evidences and delivery.failure.evidences|length > 0 %}
+              <div class="mt-1"><b>关键证据：</b></div>
+              <ul class="mb-1 ps-3">
+                {% for e in delivery.failure.evidences %}
+                <li><small>{{ e }}</small></li>
+                {% endfor %}
+              </ul>
+              {% endif %}
+              <div><b>处理建议：</b>{{ delivery.failure.suggestion }}</div>
+            </div>
+            {% endif %}
+
             <div class="row g-2 mt-2 small">
               <div class="col-6"><div class="border rounded p-2 bg-light">交付包：<b>{{ delivery.groups.packs|length }}</b></div></div>
               <div class="col-6"><div class="border rounded p-2 bg-light">报告：<b>{{ delivery.groups.reports|length }}</b></div></div>

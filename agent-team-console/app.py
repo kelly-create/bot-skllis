@@ -203,6 +203,51 @@ def classify_output_files(output_files):
     return {"packs": packs, "reports": reports, "audits": audits, "others": others}
 
 
+def extract_failure_diagnosis(logs):
+    reason = ""
+    evidences = []
+
+    for row in reversed(logs):
+        line = (row["line"] or "").strip()
+        if not line:
+            continue
+
+        if ("多Agent流程失败：" in line) or ("任务失败：" in line) or ("执行异常：" in line):
+            reason = line
+            break
+
+    if not reason:
+        for row in reversed(logs):
+            line = (row["line"] or "").strip()
+            if any(k in line for k in ["FAIL", "失败", "异常", "打回"]):
+                reason = line
+                break
+
+    for row in reversed(logs):
+        line = (row["line"] or "").strip()
+        if any(k in line for k in ["FAIL", "失败", "异常", "打回", "质控", "复核"]):
+            evidences.append(line)
+        if len(evidences) >= 3:
+            break
+
+    suggestion = "请根据失败原因修正后重置任务；若不确定，可把“失败原因+最近3条证据”发给我，我会给出具体修复步骤。"
+    combo = reason + "\n" + "\n".join(evidences)
+    if "未配置 api_base" in combo or "未配置 api_key" in combo:
+        suggestion = "先到角色中心补齐该角色的 API Base / API Key / 模型，再重置任务。"
+    elif "质控未通过" in combo:
+        suggestion = "当前阶段产出不满足验收标准。请按质控原因补齐“可验收结果”（例如实际数据/文件/结论），再重置任务。"
+    elif "最大重试" in combo or "最大返工轮次" in combo:
+        suggestion = "已触发重试上限。建议先优化当前阶段提示词或放宽验收条件，再重置任务；必要时提高重试上限。"
+    elif "HTTP" in combo or "模型请求失败" in combo:
+        suggestion = "模型/API调用失败。请检查角色 API 可用性、密钥有效性、模型名是否正确。"
+
+    return {
+        "reason": reason or "未定位到明确失败主因（请查看日志）",
+        "evidences": evidences,
+        "suggestion": suggestion,
+    }
+
+
 def build_delivery_overview(task, output_files, logs):
     status = (task["status"] or "").strip().lower()
     rc = task["return_code"]
@@ -216,7 +261,7 @@ def build_delivery_overview(task, output_files, logs):
         progress = 60
     elif status == "failed":
         headline = "❌ 任务执行失败，需要返工"
-        next_action = "查看失败日志并重置任务，必要时补充附件或说明。"
+        next_action = "查看“失败诊断”后按建议处理，再重置任务。"
         progress = 100
     else:
         headline = "📝 任务待执行"
@@ -235,6 +280,8 @@ def build_delivery_overview(task, output_files, logs):
     groups = classify_output_files(output_files)
     primary_pack = groups["packs"][0] if groups["packs"] else None
 
+    failure = extract_failure_diagnosis(logs) if status == "failed" else None
+
     return {
         "headline": headline,
         "next_action": next_action,
@@ -242,6 +289,7 @@ def build_delivery_overview(task, output_files, logs):
         "latest_line": latest_line,
         "groups": groups,
         "primary_pack": primary_pack,
+        "failure": failure,
     }
 
 
