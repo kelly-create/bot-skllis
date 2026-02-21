@@ -28,6 +28,7 @@ ROLE_DEFAULT_API_BASE = os.getenv("ATC_ROLE_DEFAULT_API_BASE", "").strip()
 ROLE_DEFAULT_API_KEY = os.getenv("ATC_ROLE_DEFAULT_API_KEY", "").strip()
 ROLE_DEFAULT_TIMEOUT = int(os.getenv("ATC_ROLE_TIMEOUT_SECONDS", "180"))
 ROLE_MAX_REWORK_ROUNDS = max(0, min(5, int(os.getenv("ATC_MAX_REWORK_ROUNDS", "2"))))
+ROLE_STAGE_REVIEW_MAX_RETRIES = max(0, min(5, int(os.getenv("ATC_STAGE_REVIEW_MAX_RETRIES", "2"))))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 os.makedirs(ARTIFACT_ROOT, exist_ok=True)
@@ -851,6 +852,41 @@ def find_stage_index_by_role(stages: list, stage_roles: dict, role_code: str, be
     return fallback_idx
 
 
+def parse_dispatch_assignments(text: str, allowed_stages: list, enabled_role_codes: set) -> dict:
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+
+    payload = None
+    m = re.search(r"\{[\s\S]*\}", raw)
+    if m:
+        try:
+            payload = json.loads(m.group(0))
+        except Exception:
+            payload = None
+
+    out = {}
+    if isinstance(payload, dict):
+        assignments = payload.get("assignments") or payload.get("dispatch") or []
+        if isinstance(assignments, list):
+            for item in assignments:
+                if not isinstance(item, dict):
+                    continue
+                stage = str(item.get("stage") or "").strip()
+                role = str(item.get("role") or item.get("assignee") or "").strip()
+                if stage in allowed_stages and role in enabled_role_codes:
+                    out[stage] = role
+        # 兼容直接 map
+        if not out:
+            for k, v in payload.items():
+                ks = str(k).strip()
+                vs = str(v).strip() if isinstance(v, (str, int, float)) else ""
+                if ks in allowed_stages and vs in enabled_role_codes:
+                    out[ks] = vs
+
+    return out
+
+
 def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
     stages = parse_stages(wf["stages_json"])
     stage_roles = parse_stage_roles(wf["stage_roles_json"])
@@ -864,15 +900,21 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
     stage_idx = 0
     execution_no = 0
     max_rework_rounds = ROLE_MAX_REWORK_ROUNDS
-    max_iterations = len(stages) * (max_rework_rounds + 2) + 8
+    max_stage_review_retries = ROLE_STAGE_REVIEW_MAX_RETRIES
+    max_iterations = len(stages) * (max_rework_rounds + max_stage_review_retries + 4) + 12
     iterations = 0
+    stage_retry_counts = {s: 0 for s in stages}
+
+    enabled_role_codes = {r["code"] for r in get_roles(enabled_only=True)}
 
     audit = {
         "taskId": task_id,
         "workflow": wf["code"],
         "maxReworkRounds": max_rework_rounds,
+        "maxStageReviewRetries": max_stage_review_retries,
         "reworkRoundsUsed": 0,
         "stages": [],
+        "dynamicAssignments": {},
         "startedAt": now_str(),
     }
 
@@ -890,7 +932,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
         if int(role["enabled"] or 0) != 1:
             raise RuntimeError(f"阶段 {stage} 角色未启用: {role_code}")
 
-        append_log(task_id, f"[Lead Agent] 阶段{stage_idx+1}/{len(stages)}：{stage} -> {role_code}（返工轮次={rework_round}）")
+        stage_retry = stage_retry_counts.get(stage, 0)
+        append_log(task_id, f"[Lead Agent] 阶段{stage_idx+1}/{len(stages)}：{stage} -> {role_code}（返工轮次={rework_round}，本阶段重试={stage_retry}/{max_stage_review_retries}）")
 
         history = load_role_messages(task_id, role_code, limit=10)
         sys_prompt = (role["system_prompt"] or "").strip()
@@ -911,6 +954,9 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
                 "你是总控分发阶段：先接收需求，再按后续角色分发任务。"
                 "请输出“分发清单”，至少包含：角色、该角色目标、输入、输出、验收标准。"
                 "不要替执行角色完成实现，只做拆解和分发。"
+                "并在结尾附上 JSON（assignments）用于动态分发，例如："
+                '{"assignments":[{"stage":"开发","role":"@developer"},{"stage":"测试","role":"@tester"}]}'
+                "。stage 必须是现有阶段名，role 必须是可用角色 code。"
             )
         else:
             stage_instruction = (
@@ -963,6 +1009,74 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
             "finishedAt": now_str(),
         }
 
+        # 动态分发：Lead 在“需求接收与分发”阶段可动态改写后续阶段角色
+        if lead_dispatch_mode:
+            dynamic = parse_dispatch_assignments(output, stages[stage_idx + 1 :], enabled_role_codes)
+            if dynamic:
+                stage_roles.update(dynamic)
+                audit["dynamicAssignments"].update(dynamic)
+                stage_audit["dynamicAssignments"] = dynamic
+                append_log(task_id, f"[Lead Agent] 动态分发生效：{json.dumps(dynamic, ensure_ascii=False)}")
+            else:
+                append_log(task_id, "[Lead Agent] 未解析到有效动态分发JSON，沿用工作流默认分配")
+
+        # 每个执行角色完成后都做阶段质控（由 @verifier 复核）
+        if (not verifier_mode) and (not lead_dispatch_mode):
+            reviewer_role = get_role_by_code("@verifier")
+            if reviewer_role and int(reviewer_role["enabled"] or 0) == 1:
+                review_stage = f"{stage}-阶段质控"
+                review_prompt = (
+                    "你是阶段质控复核。请只对当前阶段输出进行验收，不要重写实现。"
+                    f"当前阶段：{stage}，执行角色：{role_code}。\n"
+                    f"任务目标：{sections.get('task') or task['description'] or ''}\n"
+                    f"期望交付：{sections.get('delivery') or ''}\n"
+                    f"本阶段输出：\n{output}\n\n"
+                    "请返回 JSON："
+                    '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"当前角色code","rework_instructions":"..."}'
+                    "。若 FAIL，send_back_role 优先填当前角色。"
+                )
+                review_msgs = [
+                    {
+                        "role": "system",
+                        "content": (reviewer_role["system_prompt"] or "你是严格质控复核角色。"),
+                    },
+                    {"role": "user", "content": review_prompt},
+                ]
+                save_role_message(task_id, "@verifier", review_stage, "user", review_prompt)
+                review_output = call_role_llm(reviewer_role, review_msgs)
+                save_role_message(task_id, "@verifier", review_stage, "assistant", review_output)
+                quality = parse_verifier_feedback(review_output)
+                stage_audit["qualityGate"] = {"raw": review_output, "decision": quality}
+
+                q_dec = quality.get("decision", "UNKNOWN")
+                append_log(task_id, f"[@verifier] 阶段质控结论：{q_dec} | stage={stage} | reason={quality.get('reason','')[:120]}")
+
+                if q_dec != "PASS":
+                    if stage_retry >= max_stage_review_retries:
+                        stage_audit["terminatedByStageReview"] = True
+                        audit["stages"].append(stage_audit)
+                        raise RuntimeError(f"阶段 {stage} 质控未通过，且已达本阶段最大重试 {max_stage_review_retries}")
+
+                    stage_retry_counts[stage] = stage_retry + 1
+                    handoff_note = (
+                        f"阶段质控未通过（{stage}，第{stage_retry_counts[stage]}次重试）。"
+                        f"原因：{quality.get('reason','')}。"
+                        f"问题：{'；'.join(quality.get('issues') or [])}。"
+                        f"修改要求：{quality.get('rework_instructions','请根据质控意见修改后重新提交本阶段。')}"
+                    )
+                    append_log(
+                        task_id,
+                        f"[Lead Agent] 阶段质控未通过，打回当前阶段重做：{stage}（{stage_retry_counts[stage]}/{max_stage_review_retries}）",
+                    )
+                    previous_output = output
+                    audit["stages"].append(stage_audit)
+                    continue
+                else:
+                    stage_retry_counts[stage] = 0
+            else:
+                stage_audit["qualityGate"] = {"decision": {"decision": "SKIP", "reason": "@verifier不可用，跳过阶段质控"}}
+
+        # 工作流中的“验证/复核”正式阶段：可触发跨阶段打回
         if verifier_mode:
             decision = parse_verifier_feedback(output)
             stage_audit["reviewDecision"] = decision
