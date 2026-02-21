@@ -102,7 +102,7 @@
                 <select class="form-select" name="workflow_template" id="workflow_template" onchange="onWorkflowChange()">
                   {% for wf in workflows %}
                     {% if wf.enabled == 1 %}
-                    <option value="{{ wf.code }}" data-default-assignee="{{ wf.default_assignee or '' }}" data-default-task-type="{{ wf.default_task_type or '' }}" {% if wf.code == 'custom_brief' %}selected{% endif %}>
+                    <option value="{{ wf.code }}" data-default-assignee="{{ wf.default_assignee or '' }}" data-default-task-type="{{ wf.default_task_type or '' }}" {% if wf.code == 'intelligent_dual' %}selected{% endif %}>
                       {{ wf.name }}（{{ wf.code }}）
                     </option>
                     {% endif %}

@@ -30,6 +30,7 @@ ROLE_DEFAULT_API_KEY = os.getenv("ATC_ROLE_DEFAULT_API_KEY", "").strip()
 ROLE_DEFAULT_TIMEOUT = int(os.getenv("ATC_ROLE_TIMEOUT_SECONDS", "180"))
 ROLE_MAX_REWORK_ROUNDS = max(0, min(5, int(os.getenv("ATC_MAX_REWORK_ROUNDS", "2"))))
 ROLE_STAGE_REVIEW_MAX_RETRIES = max(0, min(5, int(os.getenv("ATC_STAGE_REVIEW_MAX_RETRIES", "2"))))
+ROLE_MAX_TOOL_ROUNDS = max(1, min(12, int(os.getenv("ATC_ROLE_MAX_TOOL_ROUNDS", "6"))))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 os.makedirs(ARTIFACT_ROOT, exist_ok=True)
@@ -537,6 +538,8 @@ def init_db():
         # 默认全局角色（创建一次，后续可在页面维护）
         default_roles = [
             ("Lead Agent", "Lead Agent", "任务总控与编排", "gpt-5.3-codex"),
+            ("@frontend", "前端 Agent", "前端页面、交互、可视化与体验优化", "gpt-5.3-codex"),
+            ("@backend", "后端 Agent", "后端业务、数据流、接口与自动化执行", "MiniMax-M2.5"),
             ("@developer", "开发 Agent", "实现功能、改代码、修复问题", "gpt-5.3-codex"),
             ("@tester", "测试 Agent", "回归测试、边界验证、复现问题", "gpt-5.3-codex"),
             ("@verifier", "验证 Agent", "按验收标准做最终核对", "gpt-5.3-codex"),
@@ -555,6 +558,8 @@ def init_db():
         # 默认角色词（system prompt）
         role_prompts = {
             "Lead Agent": "你是总控角色。负责拆解任务、定义阶段目标、串联各角色输出，最终给出可交付结果与结论。输出要简洁、结构化。",
+            "@frontend": "你是前端角色。负责页面结构、交互流程、可读性和可操作性优化。遇到阻塞要主动提出替代路径并执行。",
+            "@backend": "你是后端角色。负责任务评估、数据/接口/脚本执行与故障排查。遇到反爬或失败时必须先诊断原因，再切换执行策略。",
             "@developer": "你是开发角色。聚焦实现方案、关键步骤、代码/流程改动点。不要泛泛而谈，给出可执行内容。",
             "@tester": "你是测试角色。基于开发输出设计验证点、边界用例、回归清单，并标记风险与缺陷。",
             "@verifier": "你是验证角色。按任务目标与交付标准做最终核对，明确通过/不通过和理由。",
@@ -572,6 +577,26 @@ def init_db():
                 """,
                 (prompt, now_str(), role_code),
             )
+
+        # 双核心角色默认模型（允许在角色中心手动覆盖）
+        conn.execute(
+            """
+            UPDATE roles
+            SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'gpt-5.3-codex' ELSE default_model END,
+                updated_at=?
+            WHERE code='@frontend'
+            """,
+            (now_str(),),
+        )
+        conn.execute(
+            """
+            UPDATE roles
+            SET default_model = CASE WHEN default_model IS NULL OR default_model='' THEN 'MiniMax-M2.5' ELSE default_model END,
+                updated_at=?
+            WHERE code='@backend'
+            """,
+            (now_str(),),
+        )
 
         # 给未配置角色注入环境级默认 API（可为空，不强制）
         if ROLE_DEFAULT_API_BASE:
@@ -595,6 +620,15 @@ def init_db():
 
         # 默认全局工作流模板（可复用，不绑定单一业务）
         default_workflows = [
+            (
+                "intelligent_dual",
+                "智能双角色（前端+后端）",
+                "后端先评估并分配执行计划，前后端按需协作并独立调用工具执行",
+                json.dumps(["需求评估与分配", "前端实现", "后端实现", "联合交付"], ensure_ascii=False),
+                "general",
+                "@backend",
+                "",
+            ),
             (
                 "custom_brief",
                 "通用口语任务",
@@ -652,6 +686,7 @@ def init_db():
             )
 
         stage_role_defaults = {
+            "intelligent_dual": {"需求评估与分配": "@backend", "前端实现": "@frontend", "后端实现": "@backend", "联合交付": "@frontend"},
             "custom_brief": {"需求接收与分发": "Lead Agent", "执行": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
             "dev_test_verify": {"需求接收与分发": "Lead Agent", "开发": "@developer", "测试": "@tester", "验证": "@verifier", "交付": "@release"},
             "research_report": {"需求接收与分发": "Lead Agent", "调研": "@research", "提炼": "@research", "复核": "@verifier", "交付": "Lead Agent"},
@@ -670,22 +705,36 @@ def init_db():
             )
 
         workflow_stage_defaults = {
+            "intelligent_dual": ["需求评估与分配", "前端实现", "后端实现", "联合交付"],
             "custom_brief": ["需求接收与分发", "执行", "复核", "交付"],
             "dev_test_verify": ["需求接收与分发", "开发", "测试", "验证", "交付"],
             "research_report": ["需求接收与分发", "调研", "提炼", "复核", "交付"],
             "novel_multiagent": ["需求接收与分发", "采集", "清洗", "复核", "文包"],
             "xhs_virtual_keywords": ["需求接收与分发", "采集", "清洗", "复核", "交付"],
         }
+        workflow_assignee_defaults = {
+            "intelligent_dual": "@backend",
+            "custom_brief": "Lead Agent",
+            "dev_test_verify": "Lead Agent",
+            "research_report": "Lead Agent",
+            "novel_multiagent": "Lead Agent",
+            "xhs_virtual_keywords": "Lead Agent",
+        }
         for wf_code, stages in workflow_stage_defaults.items():
             conn.execute(
                 """
                 UPDATE workflows
                 SET stages_json=?,
-                    default_assignee='Lead Agent',
+                    default_assignee=?,
                     updated_at=?
                 WHERE code=?
                 """,
-                (json.dumps(stages, ensure_ascii=False), now_str(), wf_code),
+                (
+                    json.dumps(stages, ensure_ascii=False),
+                    workflow_assignee_defaults.get(wf_code, "Lead Agent"),
+                    now_str(),
+                    wf_code,
+                ),
             )
 
 
@@ -1138,7 +1187,7 @@ def run_role_stage_with_tools(
     base_dir: str,
     input_dir: str,
     output_dir: str,
-    max_tool_rounds: int = 2,
+    max_tool_rounds: int = ROLE_MAX_TOOL_ROUNDS,
 ):
     tool_round = 0
     tool_events = []
@@ -1327,7 +1376,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             sys_prompt = f"你是{role['name']}（{role['code']}），职责：{role['description'] or '完成被分配阶段并输出可执行结果'}。"
 
         verifier_mode = is_verifier_stage(stage, role_code)
-        lead_dispatch_mode = (role_code == "Lead Agent" and ("分发" in stage or stage_idx == 0))
+        dispatch_stage = ("分发" in stage) or (stage_idx == 0 and any(k in stage for k in ["评估", "拆解", "规划"]))
+        lead_dispatch_mode = bool(dispatch_stage)
         if verifier_mode:
             stage_instruction = (
                 "你只负责当前复核阶段，不负责开发实现。请严格依据任务要求判定是否通过。"
@@ -1337,11 +1387,11 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             )
         elif lead_dispatch_mode:
             stage_instruction = (
-                "你是总控分发阶段：先评估需求复杂度与风险，再按后续角色分发任务。"
+                "你是当前总控分发阶段：先评估需求复杂度、阻塞风险与执行成本，再按后续角色分发任务。"
                 "请输出“分发清单”，至少包含：角色、该角色目标、输入、输出、验收标准。"
                 "不要替执行角色完成实现，只做评估、拆解和分发。"
                 "并在结尾附上 JSON（assignments + active_stages）用于动态分发，例如："
-                '{"assignments":[{"stage":"开发","role":"@developer"},{"stage":"测试","role":"@tester"}],"active_stages":["开发","测试","验证","交付"],"skip_stages":["文包"]}'
+                '{"assignments":[{"stage":"前端实现","role":"@frontend"},{"stage":"后端实现","role":"@backend"}],"active_stages":["前端实现","后端实现","联合交付"],"skip_stages":[]}'
                 "。stage 必须是现有阶段名，role 必须是可用角色 code。"
                 "若某阶段本轮不需要执行，请明确写入 skip_stages。"
             )
@@ -1349,6 +1399,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             stage_instruction = (
                 "你只负责当前阶段，不要替下一阶段做决定。"
                 "输出本阶段可直接交接给下阶段的结果（中文、结构化、可执行）。"
+                "如果执行遇到拦截/失败，必须先给出诊断，再切换策略后继续执行，不要机械重复同一命令。"
                 "如果任务涉及爬取/采集/关键词/文包，必须通过 run_command 产出真实文件到 $TASK_OUTPUT_DIR。"
                 "如果需要实际执行工具/脚本，请只输出 JSON："
                 '{"action":"run_command","command":"python3 scripts/xxx.py ...","reason":"为什么要执行"}'
@@ -1404,7 +1455,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             base_dir=base_dir,
             input_dir=input_dir,
             output_dir=output_dir,
-            max_tool_rounds=2,
+            max_tool_rounds=ROLE_MAX_TOOL_ROUNDS,
         )
         stage_duration_sec = round(time.perf_counter() - stage_t0, 2)
         stage_files_after = list_output_file_names(output_dir)
@@ -2042,6 +2093,7 @@ def derive_title(title_raw: str, brief: str, template_name: str) -> str:
     if brief_line:
         return (brief_line[:36] + "...") if len(brief_line) > 36 else brief_line
     mapping = {
+        "intelligent_dual": "智能双角色任务",
         "novel_multiagent": "小说类目爆款文包任务",
         "xhs_virtual_keywords": "小红书高频词任务",
         "custom_brief": "口语化任务",
@@ -2087,19 +2139,14 @@ def build_command_from_template(template_name: str, project_dir: str, task_brief
 @app.post("/tasks")
 @login_required
 def create_task():
-    workflow_template = (request.form.get("workflow_template") or "custom_brief").strip()
+    workflow_template = (request.form.get("workflow_template") or "intelligent_dual").strip()
     task_brief = (request.form.get("task_brief") or "").strip()
     delivery_expectation = (request.form.get("delivery_expectation") or "").strip()
     project_dir = (request.form.get("project_dir") or "").strip()
     raw_command = (request.form.get("command") or "").strip()
 
-    # 对高置信度“小说关键词/文包”任务自动路由到专用流水线，避免 custom_brief 只给策略不落地
-    text_hint = f"{task_brief}\n{delivery_expectation}"
+    # 重构后默认不做“强制自动路由”，让双角色自主评估与分配执行路径
     auto_routed = False
-    if workflow_template == "custom_brief" and not raw_command:
-        if ("小说" in text_hint) and any(k in text_hint for k in ["关键词", "文包", "爬取", "采集"]):
-            workflow_template = "novel_multiagent"
-            auto_routed = True
 
     title = derive_title(request.form.get("title", ""), task_brief, workflow_template)
     if not title:
@@ -2119,14 +2166,14 @@ def create_task():
     wf = get_workflow_by_code(workflow_template)
 
     task_type = (request.form.get("task_type") or "general").strip()
-    assignee = (request.form.get("assignee") or "Lead Agent").strip()
+    assignee = (request.form.get("assignee") or "@backend").strip()
     priority = (request.form.get("priority") or "P2").strip()
 
     # 若未手工指定，优先套用工作流默认角色/类型
     if wf:
         if task_type == "general" and (wf["default_task_type"] or "").strip():
             task_type = (wf["default_task_type"] or "general").strip()
-        if assignee == "Lead Agent" and (wf["default_assignee"] or "").strip():
+        if assignee in ("", "Lead Agent", "@backend") and (wf["default_assignee"] or "").strip():
             assignee = (wf["default_assignee"] or "Lead Agent").strip()
 
     command = raw_command
