@@ -40,6 +40,10 @@
     .summary-chip { background: #eef2ff; color: #3730a3; border-radius: 999px; padding: .2rem .55rem; font-size: .75rem; }
     .sticky-block { position: sticky; top: 1rem; }
     .table thead th { background: #fafbff; }
+    .view-toolbar { border: 1px dashed #d8deea; border-radius: 12px; padding: .75rem; background: #fff; }
+    .task-mini.hidden-by-filter, tr.hidden-by-filter { display: none !important; }
+    .filter-chip { border: 1px solid #d6ddf0; background:#fff; color:#344054; border-radius:999px; padding:.2rem .6rem; font-size:.78rem; cursor:pointer; }
+    .filter-chip.active { background:#1d4ed8; color:#fff; border-color:#1d4ed8; }
   </style>
 </head>
 <body>
@@ -84,6 +88,21 @@
       <div class="card soft-card h-100"><div class="card-body d-flex justify-content-between align-items-center">
         <div><div class="metric-label">需返工</div><div class="metric-value">{{ stats.failed }}</div></div><div class="metric-icon">🚧</div>
       </div></div>
+    </div>
+  </div>
+
+  <div class="view-toolbar mb-3">
+    <div class="row g-2 align-items-center">
+      <div class="col-md-6">
+        <input id="taskSearchInput" class="form-control form-control-sm" placeholder="快速筛选任务：标题 / 角色 / 模板" />
+      </div>
+      <div class="col-md-6 d-flex gap-1 flex-wrap justify-content-md-end">
+        <button type="button" class="filter-chip active" data-status-filter="all" onclick="setStatusFilter('all', this)">全部</button>
+        <button type="button" class="filter-chip" data-status-filter="pending" onclick="setStatusFilter('pending', this)">待处理</button>
+        <button type="button" class="filter-chip" data-status-filter="running" onclick="setStatusFilter('running', this)">执行中</button>
+        <button type="button" class="filter-chip" data-status-filter="done" onclick="setStatusFilter('done', this)">待确认</button>
+        <button type="button" class="filter-chip" data-status-filter="failed" onclick="setStatusFilter('failed', this)">返工</button>
+      </div>
     </div>
   </div>
 
@@ -199,7 +218,7 @@
                     <div class="text-muted small">暂无任务</div>
                   {% else %}
                     {% for t in tasks_by_phase.get(phase, []) %}
-                    <div class="task-mini">
+                    <div class="task-mini" data-task-card="1" data-status="{{ t.status }}" data-search="{{ (t.title ~ ' ' ~ t.assignee ~ ' ' ~ (t.workflow_code or ''))|lower }}">
                       <div class="title"><a class="task-title-link" href="{{ url_for('task_detail', task_id=t.id) }}">#{{ t.id }} {{ t.title }}</a></div>
                       <div class="d-flex flex-wrap gap-1 mt-1">
                         <span class="meta-chip">{{ t.assignee }}</span>
@@ -237,7 +256,7 @@
             <thead><tr><th>标题</th><th>类型</th><th>执行者</th><th>优先级</th><th>状态</th><th>返回码</th><th>更新时间</th><th>操作</th></tr></thead>
             <tbody>
             {% for t in tasks %}
-              <tr>
+              <tr data-task-row="1" data-status="{{ t.status }}" data-search="{{ (t.title ~ ' ' ~ t.assignee ~ ' ' ~ (t.workflow_code or '') ~ ' ' ~ (t.task_type or ''))|lower }}">
                 <td><a class="task-title-link" href="{{ url_for('task_detail', task_id=t.id) }}">#{{ t.id }} {{ t.title }}</a></td>
                 <td>{{ t.task_type }}</td>
                 <td>{{ t.assignee }}</td>
@@ -430,6 +449,8 @@
 <script>
 let autoRefreshEnabled = true;
 let formDirty = false;
+let currentStatusFilter = 'all';
+let currentSearchKeyword = '';
 
 function setDirty() {
   formDirty = true;
@@ -441,6 +462,33 @@ function toggleAutoRefresh() {
   if (btn) {
     btn.textContent = autoRefreshEnabled ? '自动刷新：开' : '自动刷新：关';
   }
+}
+
+function setStatusFilter(status, btnEl) {
+  currentStatusFilter = status || 'all';
+  document.querySelectorAll('.filter-chip').forEach(chip => chip.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+  applyTaskFilters();
+}
+
+function applyTaskFilters() {
+  const cards = document.querySelectorAll('[data-task-card="1"]');
+  const rows = document.querySelectorAll('[data-task-row="1"]');
+
+  const match = (status, searchText) => {
+    const okStatus = (currentStatusFilter === 'all') || (status === currentStatusFilter);
+    const okSearch = !currentSearchKeyword || (searchText || '').includes(currentSearchKeyword);
+    return okStatus && okSearch;
+  };
+
+  cards.forEach(el => {
+    const ok = match(el.getAttribute('data-status') || '', (el.getAttribute('data-search') || '').toLowerCase());
+    el.classList.toggle('hidden-by-filter', !ok);
+  });
+  rows.forEach(el => {
+    const ok = match(el.getAttribute('data-status') || '', (el.getAttribute('data-search') || '').toLowerCase());
+    el.classList.toggle('hidden-by-filter', !ok);
+  });
 }
 
 function onWorkflowChange() {
@@ -490,7 +538,16 @@ function onWorkflowChange() {
     el.addEventListener('change', setDirty);
   });
 
+  const searchInput = document.getElementById('taskSearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', (e) => {
+      currentSearchKeyword = (e.target.value || '').trim().toLowerCase();
+      applyTaskFilters();
+    });
+  }
+
   onWorkflowChange();
+  applyTaskFilters();
 
   setInterval(() => {
     if (!autoRefreshEnabled) return;

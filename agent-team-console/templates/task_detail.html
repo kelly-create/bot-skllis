@@ -243,10 +243,20 @@
       </div>
 
       <div class="card soft-card">
-        <div class="card-header">执行日志（自动刷新）</div>
+        <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span>执行日志（自动刷新）</span>
+          <div class="d-flex gap-1 flex-wrap">
+            <input id="logSearchInput" class="form-control form-control-sm" style="min-width:220px" placeholder="筛选日志关键词" />
+            <select id="runFilter" class="form-select form-select-sm" style="min-width:180px">
+              <option value="all">全部运行</option>
+            </select>
+            <button type="button" id="errorOnlyBtn" class="btn btn-sm btn-outline-secondary" onclick="toggleErrorOnly()">仅异常：关</button>
+          </div>
+        </div>
         <div class="card-body">
-          <div id="logBox" class="log-box p-3">{% for l in logs %}[{{ l.ts }}] {{ l.line }}
-{% endfor %}</div>
+          <div id="logBox" class="log-box p-3"></div>
+          <textarea id="logRaw" class="d-none">{% for l in logs %}[{{ l.ts }}] {{ l.line }}
+{% endfor %}</textarea>
         </div>
       </div>
     </div>
@@ -256,6 +266,10 @@
 <script>
 let autoRefreshEnabled = true;
 let formDirty = false;
+let logErrorOnly = false;
+let logSearch = '';
+let logRunFilter = 'all';
+let allLogLines = [];
 
 function setDirty() { formDirty = true; }
 
@@ -265,12 +279,74 @@ function toggleAutoRefresh() {
   if (btn) btn.textContent = autoRefreshEnabled ? '自动刷新：开' : '自动刷新：关';
 }
 
+function toggleErrorOnly() {
+  logErrorOnly = !logErrorOnly;
+  formDirty = true;
+  const btn = document.getElementById('errorOnlyBtn');
+  if (btn) btn.textContent = logErrorOnly ? '仅异常：开' : '仅异常：关';
+  renderLogs();
+}
+
+function parseRunId(line) {
+  const m = (line || '').match(/\[run:([^\]]+)\]/);
+  return m ? m[1] : '';
+}
+
+function renderLogs() {
+  const box = document.getElementById('logBox');
+  if (!box) return;
+  const out = allLogLines.filter((line) => {
+    const l = (line || '').toLowerCase();
+    if (logSearch && !l.includes(logSearch)) return false;
+    if (logRunFilter !== 'all' && parseRunId(line) !== logRunFilter) return false;
+    if (logErrorOnly) {
+      const hit = ['error', '失败', '拒绝执行', 'fail', 'warn', '超时', 'timedout'].some(k => l.includes(k));
+      if (!hit) return false;
+    }
+    return true;
+  });
+  box.textContent = out.join('\n');
+  box.scrollTop = box.scrollHeight;
+}
+
 (function initGuard() {
   const fields = document.querySelectorAll('input, select, textarea');
   fields.forEach((el) => {
-    el.addEventListener('input', setDirty);
-    el.addEventListener('change', setDirty);
+    if (el.id !== 'logSearchInput' && el.id !== 'runFilter') {
+      el.addEventListener('input', setDirty);
+      el.addEventListener('change', setDirty);
+    }
   });
+
+  const raw = document.getElementById('logRaw');
+  allLogLines = ((raw?.value || '').split('\n')).filter(x => x.trim());
+
+  const runSel = document.getElementById('runFilter');
+  if (runSel) {
+    const runIds = Array.from(new Set(allLogLines.map(parseRunId).filter(Boolean)));
+    runIds.forEach((rid) => {
+      const opt = document.createElement('option');
+      opt.value = rid;
+      opt.textContent = rid;
+      runSel.appendChild(opt);
+    });
+    runSel.addEventListener('change', (e) => {
+      logRunFilter = e.target.value || 'all';
+      formDirty = true;
+      renderLogs();
+    });
+  }
+
+  const logSearchInput = document.getElementById('logSearchInput');
+  if (logSearchInput) {
+    logSearchInput.addEventListener('input', (e) => {
+      logSearch = (e.target.value || '').trim().toLowerCase();
+      formDirty = true;
+      renderLogs();
+    });
+  }
+
+  renderLogs();
 
   setInterval(() => {
     if (!autoRefreshEnabled) return;
