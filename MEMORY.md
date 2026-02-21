@@ -249,10 +249,10 @@ python3 scripts/context_backup.py '{"summary": "今日摘要..."}'
 - ✅ 小说流水线已补“最近7天采样硬门槛”（`min_recent_7d`）并修复“strict未通过仍返回rc=0”漏洞；默认任务命令已强制 `--min-recent-7d 7`。
 - ✅ 每次重跑已增加 `run_id` 日志前缀 + 自动清理旧输出/角色会话；停止任务改为进程组级终止，减少残留子进程导致的结果混杂。
 - ✅ 小红书采集已新增“频控识别+反拦截自适应轮次”（降速、关键词级冷却重试、禁扩词切换），避免被拦截后机械重跑。
-- ✅ Agent Team 已收敛为四角色精简架构：`Lead Agent(gpt-5.3-codex)` + `frontend(MiniMax-M2.5)` + `backend(gpt-5.3-codex)` + `reviewer(gpt-5.3-codex)`；仅保留 `intelligent_dual` 工作流（Lead评估调度，前后端执行，reviewer复核打回，Lead最终验收也可打回）。
+- ✅ Agent Team 已收敛为四角色精简架构：`Lead Agent(gpt-5.3-codex)` + `frontend(MiniMax-M2.5)` + `backend(MiniMax-M2.5)` + `reviewer(gpt-5.3-codex)`；仅保留 `intelligent_dual` 工作流（Lead评估调度，前后端执行，reviewer复核打回，Lead最终验收也可打回）。
 - ✅ 已增加分发防呆：若Lead把执行阶段全部跳过，系统会自动补回至少一个执行阶段，避免“只复核不执行”导致的循环失败。
 - ✅ 已修复 frontend“未配置”问题（MiniMax API配置恢复并通过直连调用验证）。
-- ✅ GPT角色（Lead/backend/reviewer）已默认开启深度思考参数（reasoning/thinking=high）；MiniMax前端角色保持无该参数以兼容API。
+- ✅ GPT角色（Lead/reviewer）已默认开启深度思考参数（reasoning/thinking=high）；MiniMax前后端角色保持无该参数以兼容API。
 - ✅ 用户新增偏好：验证类联调任务结束后要及时清理测试数据（任务记录/日志/产物）。
 - ✅ 控制台完成“去臃肿”连续改造：主页新增快速筛选、角色/工作流/提示默认折叠，并重排为 chatgpt 风格的“轻侧栏+主工作区”；任务详情支持按运行ID与异常过滤日志。
 - ✅ 主页侧栏已升级为深色风格，任务概览支持点击即筛选，补齐“概览不可点”的交互短板。

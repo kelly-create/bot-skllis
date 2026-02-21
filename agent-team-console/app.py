@@ -1556,6 +1556,10 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
     active_stage_set = set(stages)
     acceptance_contract = build_default_acceptance_contract(task["title"] or "", sections)
     collision_rounds = ROLE_CROSS_REVIEW_ROUNDS
+    last_execution_output = ""
+    last_execution_stage = ""
+    last_execution_role = ""
+    lead_acceptance_result = None
 
     audit = {
         "taskId": task_id,
@@ -1966,6 +1970,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
         # Lead 最终验收阶段：Lead 也有打回权限
         if lead_acceptance_mode:
             decision = parse_verifier_feedback(output)
+            lead_acceptance_result = decision
             stage_audit["leadAcceptance"] = decision
             dec = decision.get("decision", "UNKNOWN")
             append_log(task_id, f"[Lead Agent] 验收结论：{dec} | reason={decision.get('reason','')[:120]}")
@@ -1996,16 +2001,42 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 stage_idx = target_idx
                 continue
 
+        if (not verifier_mode) and (not lead_dispatch_mode) and (not lead_acceptance_mode):
+            last_execution_output = output
+            last_execution_stage = stage
+            last_execution_role = role_code
+
         previous_output = output
         handoff_note = ""
         audit["stages"].append(stage_audit)
         append_log(task_id, f"[{role_code}] 阶段完成，输出长度={len(output)}，耗时={stage_duration_sec}s")
         stage_idx += 1
 
+    final_non_system_files = [x for x in sorted(list_output_file_names(output_dir)) if not is_system_generated_output(x)]
+    final_body = previous_output
+
+    if lead_acceptance_result and (lead_acceptance_result.get("decision") == "PASS") and last_execution_output:
+        reason = lead_acceptance_result.get("reason") or "通过最终验收。"
+        issues = lead_acceptance_result.get("issues") or []
+        final_body = (
+            "## Lead 最终验收\n"
+            f"- 结论：PASS\n"
+            f"- 原因：{reason}\n"
+            + (f"- 注意事项：{'；'.join(issues)}\n" if issues else "")
+            + "\n## 核心交付正文\n"
+            f"（来源：阶段【{last_execution_stage}】角色【{last_execution_role}】）\n\n"
+            f"{last_execution_output}\n"
+        )
+
     final_file = os.path.join(output_dir, "多Agent_最终交付.md")
     with open(final_file, "w", encoding="utf-8") as f:
         f.write(f"# 多Agent最终交付\n\n任务：{task['title']}\n\n")
-        f.write(previous_output + "\n")
+        if final_non_system_files:
+            f.write("## 可验收产物清单\n")
+            for fn in final_non_system_files:
+                f.write(f"- {fn}\n")
+            f.write("\n")
+        f.write(final_body + "\n")
 
     audit["finishedAt"] = now_str()
     audit["finalFile"] = os.path.basename(final_file)
