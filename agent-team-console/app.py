@@ -429,7 +429,7 @@ def init_db():
                 "custom_brief",
                 "通用口语任务",
                 "口语化描述 + 附件输入，适配任意任务",
-                json.dumps(["需求理解", "执行", "复核", "交付"], ensure_ascii=False),
+                json.dumps(["需求接收与分发", "执行", "复核", "交付"], ensure_ascii=False),
                 "general",
                 "Lead Agent",
                 "",
@@ -438,25 +438,25 @@ def init_db():
                 "dev_test_verify",
                 "开发→测试→验证",
                 "面向代码任务的标准闭环",
-                json.dumps(["开发", "测试", "验证", "交付"], ensure_ascii=False),
+                json.dumps(["需求接收与分发", "开发", "测试", "验证", "交付"], ensure_ascii=False),
                 "backend",
-                "@developer",
+                "Lead Agent",
                 "",
             ),
             (
                 "research_report",
                 "调研→提炼→交付",
                 "面向信息分析与内容生产任务",
-                json.dumps(["调研", "提炼", "复核", "交付"], ensure_ascii=False),
+                json.dumps(["需求接收与分发", "调研", "提炼", "复核", "交付"], ensure_ascii=False),
                 "research",
-                "@research",
+                "Lead Agent",
                 "",
             ),
             (
                 "novel_multiagent",
                 "小说类目爆款文包（多Agent）",
                 "采集→清洗→复核→文包",
-                json.dumps(["采集", "清洗", "复核", "文包"], ensure_ascii=False),
+                json.dumps(["需求接收与分发", "采集", "清洗", "复核", "文包"], ensure_ascii=False),
                 "research",
                 "Lead Agent",
                 "",
@@ -465,9 +465,9 @@ def init_db():
                 "xhs_virtual_keywords",
                 "小红书高频词分析",
                 "关键词采集与高频词报告",
-                json.dumps(["采集", "清洗", "复核", "交付"], ensure_ascii=False),
+                json.dumps(["需求接收与分发", "采集", "清洗", "复核", "交付"], ensure_ascii=False),
                 "research",
-                "@research",
+                "Lead Agent",
                 "cd __PROJECT_DIR__ && python3 scripts/xhs_virtual_keywords.py --keywords '虚拟产品,数字产品,PPT模板,简历模板,教程课程,AI提示词,素材包,资料包' --cookie-file $TASK_INPUT_DIR/xhs_cookies.json --scrolls 4 --auto-related 2 --max-keywords 24 --domain general --strict --min-usable 4 --out-md $TASK_OUTPUT_DIR/xhs_virtual_keywords.md --out-json $TASK_OUTPUT_DIR/xhs_virtual_keywords.json",
             ),
         ]
@@ -482,21 +482,40 @@ def init_db():
             )
 
         stage_role_defaults = {
-            "custom_brief": {"需求理解": "Lead Agent", "执行": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
-            "dev_test_verify": {"开发": "@developer", "测试": "@tester", "验证": "@verifier", "交付": "@release"},
-            "research_report": {"调研": "@research", "提炼": "@research", "复核": "@verifier", "交付": "Lead Agent"},
-            "novel_multiagent": {"采集": "@research", "清洗": "@developer", "复核": "@verifier", "文包": "@release"},
-            "xhs_virtual_keywords": {"采集": "@research", "清洗": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
+            "custom_brief": {"需求接收与分发": "Lead Agent", "执行": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
+            "dev_test_verify": {"需求接收与分发": "Lead Agent", "开发": "@developer", "测试": "@tester", "验证": "@verifier", "交付": "@release"},
+            "research_report": {"需求接收与分发": "Lead Agent", "调研": "@research", "提炼": "@research", "复核": "@verifier", "交付": "Lead Agent"},
+            "novel_multiagent": {"需求接收与分发": "Lead Agent", "采集": "@research", "清洗": "@developer", "复核": "@verifier", "文包": "@release"},
+            "xhs_virtual_keywords": {"需求接收与分发": "Lead Agent", "采集": "@research", "清洗": "@developer", "复核": "@verifier", "交付": "Lead Agent"},
         }
         for wf_code, mapping in stage_role_defaults.items():
             conn.execute(
                 """
                 UPDATE workflows
-                SET stage_roles_json = CASE WHEN stage_roles_json IS NULL OR stage_roles_json='' THEN ? ELSE stage_roles_json END,
+                SET stage_roles_json = ?,
                     updated_at=?
                 WHERE code=?
                 """,
                 (json.dumps(mapping, ensure_ascii=False), now_str(), wf_code),
+            )
+
+        workflow_stage_defaults = {
+            "custom_brief": ["需求接收与分发", "执行", "复核", "交付"],
+            "dev_test_verify": ["需求接收与分发", "开发", "测试", "验证", "交付"],
+            "research_report": ["需求接收与分发", "调研", "提炼", "复核", "交付"],
+            "novel_multiagent": ["需求接收与分发", "采集", "清洗", "复核", "文包"],
+            "xhs_virtual_keywords": ["需求接收与分发", "采集", "清洗", "复核", "交付"],
+        }
+        for wf_code, stages in workflow_stage_defaults.items():
+            conn.execute(
+                """
+                UPDATE workflows
+                SET stages_json=?,
+                    default_assignee='Lead Agent',
+                    updated_at=?
+                WHERE code=?
+                """,
+                (json.dumps(stages, ensure_ascii=False), now_str(), wf_code),
             )
 
 
@@ -879,12 +898,19 @@ def run_multi_agent_workflow(task_id: int, task, wf, output_dir: str):
             sys_prompt = f"你是{role['name']}（{role['code']}），职责：{role['description'] or '完成被分配阶段并输出可执行结果'}。"
 
         verifier_mode = is_verifier_stage(stage, role_code)
+        lead_dispatch_mode = (role_code == "Lead Agent" and ("分发" in stage or stage_idx == 0))
         if verifier_mode:
             stage_instruction = (
                 "你只负责当前复核阶段，不负责开发实现。请严格依据任务要求判定是否通过。"
                 "必须返回 JSON："
                 '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"@developer 或 @tester","rework_instructions":"..."}'
                 "。如果通过，issues可为空，send_back_role可空。"
+            )
+        elif lead_dispatch_mode:
+            stage_instruction = (
+                "你是总控分发阶段：先接收需求，再按后续角色分发任务。"
+                "请输出“分发清单”，至少包含：角色、该角色目标、输入、输出、验收标准。"
+                "不要替执行角色完成实现，只做拆解和分发。"
             )
         else:
             stage_instruction = (
