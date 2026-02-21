@@ -32,6 +32,8 @@ ROLE_MAX_REWORK_ROUNDS = max(0, min(5, int(os.getenv("ATC_MAX_REWORK_ROUNDS", "5
 ROLE_STAGE_REVIEW_MAX_RETRIES = max(0, min(5, int(os.getenv("ATC_STAGE_REVIEW_MAX_RETRIES", "5"))))
 ROLE_MAX_TOOL_ROUNDS = max(1, min(10, int(os.getenv("ATC_ROLE_MAX_TOOL_ROUNDS", "5"))))
 ROLE_REASONING_EFFORT = (os.getenv("ATC_ROLE_REASONING_EFFORT", "high") or "high").strip()
+ROLE_CROSS_REVIEW_ROUNDS = max(0, min(6, int(os.getenv("ATC_ROLE_CROSS_REVIEW_ROUNDS", "3"))))
+ROLE_HISTORY_LIMIT = max(8, min(50, int(os.getenv("ATC_ROLE_HISTORY_LIMIT", "20"))))
 
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 os.makedirs(ARTIFACT_ROOT, exist_ok=True)
@@ -972,6 +974,70 @@ def parse_task_sections(description: str):
     return out
 
 
+def build_default_acceptance_contract(task_title: str, sections: dict) -> dict:
+    task_goal = (sections.get("task") or task_title or "").strip()
+    delivery_hint = (sections.get("delivery") or "").strip()
+    must_answer = [
+        f"围绕任务目标给出可验证结论：{task_goal}" if task_goal else "围绕任务目标给出可验证结论",
+        "给出关键数字/判断依据，并说明来源或计算方式",
+        "给出可复现路径（命令、参数、数据来源或处理步骤）",
+    ]
+    if delivery_hint:
+        must_answer.append(f"覆盖用户期望交付：{delivery_hint}")
+
+    return {
+        "must_answer": must_answer,
+        "evidence_requirements": [
+            "至少包含可核验的关键证据（来源片段、统计明细、或产物片段）",
+            "需要说明结论与证据的对应关系",
+        ],
+        "delivery_form": "交付形式可自由选择（md/json/csv/txt/zip等），不强制固定文件名",
+        "forbidden": [
+            "只给命令或脚本片段，不给执行结果",
+            "只做诊断不收敛到结论",
+        ],
+    }
+
+
+def normalize_acceptance_contract(contract: dict, task_title: str, sections: dict) -> dict:
+    base = build_default_acceptance_contract(task_title, sections)
+    if not isinstance(contract, dict):
+        return base
+
+    out = dict(base)
+    for k in ["must_answer", "evidence_requirements", "forbidden"]:
+        v = contract.get(k)
+        if isinstance(v, list):
+            vv = [str(x).strip() for x in v if str(x).strip()]
+            if vv:
+                out[k] = vv
+
+    if isinstance(contract.get("delivery_form"), str) and contract.get("delivery_form").strip():
+        out["delivery_form"] = contract.get("delivery_form").strip()
+
+    return out
+
+
+def contract_to_text(contract: dict) -> str:
+    c = contract or {}
+    lines = ["【任务验收契约】"]
+    ma = c.get("must_answer") or []
+    er = c.get("evidence_requirements") or []
+    fb = c.get("forbidden") or []
+    if ma:
+        lines.append("- 必须回答：")
+        lines.extend([f"  - {x}" for x in ma])
+    if er:
+        lines.append("- 证据要求：")
+        lines.extend([f"  - {x}" for x in er])
+    if c.get("delivery_form"):
+        lines.append(f"- 交付形式：{c.get('delivery_form')}")
+    if fb:
+        lines.append("- 禁止行为：")
+        lines.extend([f"  - {x}" for x in fb])
+    return "\n".join(lines)
+
+
 def ensure_not_stopped(task_id: int):
     if task_id not in running_processes:
         raise RuntimeError("任务被手动停止")
@@ -1302,6 +1368,8 @@ def parse_dispatch_plan(text: str, allowed_stages: list, enabled_role_codes: set
         "assignments": {},
         "active_stages": None,  # None=不改，list=改写
         "skipped_stages": [],
+        "acceptance_contract": None,
+        "collision_rounds": None,
     }
     if not raw:
         return out
@@ -1347,7 +1415,123 @@ def parse_dispatch_plan(text: str, allowed_stages: list, enabled_role_codes: set
         if out["active_stages"] is None:
             out["active_stages"] = [s for s in allowed_stages if s not in skips]
 
+    contract_raw = payload.get("acceptance_contract")
+    if isinstance(contract_raw, dict):
+        out["acceptance_contract"] = contract_raw
+
+    rounds_raw = payload.get("collision_rounds")
+    if isinstance(rounds_raw, (int, float, str)):
+        try:
+            rr = int(float(rounds_raw))
+            out["collision_rounds"] = max(0, min(6, rr))
+        except Exception:
+            pass
+
     return out
+
+
+def run_stage_collision(
+    task_id: int,
+    stage: str,
+    role,
+    reviewer_role,
+    sections: dict,
+    contract_text: str,
+    previous_output: str,
+    handoff_note: str,
+    current_output: str,
+    base_dir: str,
+    input_dir: str,
+    output_dir: str,
+    rounds: int,
+):
+    if not reviewer_role or rounds <= 0:
+        return current_output, [], []
+
+    reviewer_code = reviewer_role["code"]
+    output = current_output
+    extra_tool_events = []
+    collision_records = []
+
+    for i in range(1, rounds + 1):
+        ensure_not_stopped(task_id)
+        review_stage = f"{stage}-对抗评审"
+        review_prompt = (
+            "你是对抗评审角色。目标不是复述，而是找出当前输出离‘可验收交付’还差什么。"
+            "请严格返回 JSON："
+            '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"当前角色code","rework_instructions":"..."}'
+            "。FAIL 时必须给出可执行修改要求。\n"
+            f"任务目标：{sections.get('task') or ''}\n"
+            f"期望交付：{sections.get('delivery') or ''}\n"
+            f"{contract_text}\n\n"
+            f"当前阶段输出：\n{output}\n"
+        )
+        review_msgs = [
+            {"role": "system", "content": (reviewer_role["system_prompt"] or "你是严苛评审。")},
+            {"role": "user", "content": review_prompt},
+        ]
+        save_role_message(task_id, reviewer_code, review_stage, "user", review_prompt)
+        review_output = call_role_llm(reviewer_role, review_msgs)
+        save_role_message(task_id, reviewer_code, review_stage, "assistant", review_output)
+        decision = parse_verifier_feedback(review_output)
+        dec = decision.get("decision", "UNKNOWN")
+
+        collision_item = {
+            "round": i,
+            "reviewer": reviewer_code,
+            "decision": decision,
+        }
+        collision_records.append(collision_item)
+        append_log(task_id, f"[{reviewer_code}] 对抗评审 第{i}/{rounds}轮：{dec} | reason={decision.get('reason','')[:120]}")
+
+        if dec == "PASS":
+            break
+
+        revise_instruction = (
+            "你收到评审挑战，请只针对缺口补齐可验收结果。"
+            "允许继续使用 run_command；若完成请返回 final。"
+            "不要重复诊断，优先输出新增证据与新增结论。\n"
+            f"评审原因：{decision.get('reason','')}\n"
+            f"评审问题：{'；'.join(decision.get('issues') or [])}\n"
+            f"修改要求：{decision.get('rework_instructions','请补齐缺口后提交。')}\n"
+            f"{contract_text}"
+        )
+
+        history = load_role_messages(task_id, role["code"], limit=ROLE_HISTORY_LIMIT)
+        msgs = [{"role": "system", "content": (role["system_prompt"] or f"你是{role['code']}") }]
+        for h in history:
+            turn = (h["turn"] or "").strip().lower()
+            if turn in ("user", "assistant", "system"):
+                msgs.append({"role": turn, "content": h["content"] or ""})
+        revise_prompt = (
+            f"你当前负责阶段：{stage}\n"
+            f"任务描述：{sections.get('task') or ''}\n"
+            f"期望交付：{sections.get('delivery') or ''}\n"
+            f"上一个阶段输出（可忽略）：\n{previous_output}\n\n"
+            f"返工/交接说明（可忽略）：\n{handoff_note}\n\n"
+            f"当前阶段已有输出：\n{output}\n\n"
+            f"本轮挑战与修改要求：\n{revise_instruction}"
+        )
+        msgs.append({"role": "user", "content": revise_prompt})
+        save_role_message(task_id, role["code"], stage, "user", revise_prompt)
+
+        new_output, new_tools = run_role_stage_with_tools(
+            task_id=task_id,
+            stage=stage,
+            role=role,
+            messages=msgs,
+            base_dir=base_dir,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            max_tool_rounds=ROLE_MAX_TOOL_ROUNDS,
+        )
+        output = new_output
+        extra_tool_events.extend(new_tools)
+        collision_item["toolEvents"] = new_tools
+        collision_item["revisedChars"] = len(new_output)
+        append_log(task_id, f"[{role['code']}] 对抗评审后修订完成（第{i}/{rounds}轮），输出长度={len(new_output)}")
+
+    return output, extra_tool_events, collision_records
 
 
 def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: str, output_dir: str):
@@ -1370,6 +1554,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
 
     enabled_role_codes = {r["code"] for r in get_roles(enabled_only=True)}
     active_stage_set = set(stages)
+    acceptance_contract = build_default_acceptance_contract(task["title"] or "", sections)
+    collision_rounds = ROLE_CROSS_REVIEW_ROUNDS
 
     audit = {
         "taskId": task_id,
@@ -1379,6 +1565,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
         "reworkRoundsUsed": 0,
         "stages": [],
         "dynamicAssignments": {},
+        "acceptanceContract": acceptance_contract,
+        "collisionRounds": collision_rounds,
         "startedAt": now_str(),
     }
 
@@ -1418,7 +1606,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
         stage_retry = stage_retry_counts.get(stage, 0)
         append_log(task_id, f"[Lead Agent] 阶段{stage_idx+1}/{len(stages)}：{stage} -> {role_code}（返工轮次={rework_round}，本阶段重试={stage_retry}/{max_stage_review_retries}）")
 
-        history = load_role_messages(task_id, role_code, limit=10)
+        history = load_role_messages(task_id, role_code, limit=ROLE_HISTORY_LIMIT)
         sys_prompt = (role["system_prompt"] or "").strip()
         if not sys_prompt:
             sys_prompt = f"你是{role['name']}（{role['code']}），职责：{role['description'] or '完成被分配阶段并输出可执行结果'}。"
@@ -1443,14 +1631,16 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 "你是当前总控分发阶段：先评估需求复杂度、阻塞风险与执行成本，再按后续角色分发任务。"
                 "请输出“分发清单”，至少包含：角色、该角色目标、输入、输出、验收标准。"
                 "不要替执行角色完成实现，只做评估、拆解和分发。"
-                "并在结尾附上 JSON（assignments + active_stages）用于动态分发，例如："
-                '{"assignments":[{"stage":"前端实现","role":"frontend"},{"stage":"后端实现","role":"backend"}],"active_stages":["前端实现","后端实现","复核","联合交付"],"skip_stages":[]}'
+                "并在结尾附上 JSON（assignments + active_stages + acceptance_contract + collision_rounds）用于动态分发，例如："
+                '{"assignments":[{"stage":"前端实现","role":"frontend"},{"stage":"后端实现","role":"backend"}],"active_stages":["前端实现","后端实现","复核","联合交付"],"skip_stages":[],"acceptance_contract":{"must_answer":["必须回答的问题"],"evidence_requirements":["证据要求"],"delivery_form":"交付形式不限"},"collision_rounds":3}'
                 "。stage 必须是现有阶段名，role 必须是可用角色 code。"
                 "若某阶段本轮不需要执行，请明确写入 skip_stages。"
+                "acceptance_contract 只定义验收维度，不要写死具体文件名。"
             )
         elif lead_acceptance_mode:
             stage_instruction = (
                 "你是Lead最终验收阶段：必须对前序执行与复核结果做最终裁决。"
+                "请依据任务验收契约判断，不要写死具体文件名。"
                 "如通过，请返回 JSON："
                 '{"decision":"PASS","reason":"...","issues":[],"send_back_role":"","rework_instructions":""}'
                 "。"
@@ -1487,6 +1677,8 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 "--output-dir $TASK_OUTPUT_DIR --max-rounds 3 --min-usable 8 --min-recent-7d 7 --min-domain-ratio 0.75 --max-noise-ratio 0.35 --pack-format zip"
             )
 
+        contract_text = contract_to_text(acceptance_contract)
+
         user_prompt = (
             f"你当前负责阶段：{stage}\n"
             f"任务标题：{task['title']}\n"
@@ -1495,6 +1687,7 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             f"补充说明：{sections.get('extra') or ''}\n"
             f"上一个阶段输出（若为空可忽略）：\n{previous_output}\n\n"
             f"返工/交接说明（若为空可忽略）：\n{handoff_note}\n\n"
+            f"{contract_text}\n\n"
             f"阶段规则：{stage_instruction}"
             f"{command_hint}"
         )
@@ -1566,6 +1759,20 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                 stage_audit["dynamicAssignments"] = dynamic
                 append_log(task_id, f"[Lead Agent] 动态分发生效：{json.dumps(dynamic, ensure_ascii=False)}")
 
+            contract_raw = plan.get("acceptance_contract")
+            if isinstance(contract_raw, dict):
+                acceptance_contract = normalize_acceptance_contract(contract_raw, task["title"] or "", sections)
+                audit["acceptanceContract"] = acceptance_contract
+                stage_audit["acceptanceContract"] = acceptance_contract
+                append_log(task_id, "[Lead Agent] 已更新任务验收契约（动态生成）")
+
+            rounds_raw = plan.get("collision_rounds")
+            if isinstance(rounds_raw, int):
+                collision_rounds = max(0, min(6, rounds_raw))
+                audit["collisionRounds"] = collision_rounds
+                stage_audit["collisionRounds"] = collision_rounds
+                append_log(task_id, f"[Lead Agent] 已设置角色碰撞轮次：{collision_rounds}")
+
             active_stages = plan.get("active_stages")
             if isinstance(active_stages, list):
                 # 守住末端质控/交付类阶段，避免被误跳过
@@ -1598,6 +1805,48 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
             elif not dynamic:
                 append_log(task_id, "[Lead Agent] 未解析到有效动态分发JSON，沿用工作流默认分配")
 
+        # 多角色碰撞：执行阶段先做 reviewer 对抗评审，再由当前角色修订（可多轮）
+        if (not verifier_mode) and (not lead_dispatch_mode) and (not lead_acceptance_mode) and collision_rounds > 0:
+            reviewer_role, reviewer_code = get_reviewer_role()
+            if reviewer_role and int(reviewer_role["enabled"] or 0) == 1:
+                output, extra_tools, collision_records = run_stage_collision(
+                    task_id=task_id,
+                    stage=stage,
+                    role=role,
+                    reviewer_role=reviewer_role,
+                    sections=sections,
+                    contract_text=contract_text,
+                    previous_output=previous_output,
+                    handoff_note=handoff_note,
+                    current_output=output,
+                    base_dir=base_dir,
+                    input_dir=input_dir,
+                    output_dir=output_dir,
+                    rounds=collision_rounds,
+                )
+                if extra_tools:
+                    tool_events.extend(extra_tools)
+                    stage_audit["toolEvents"] = tool_events
+                if collision_records:
+                    stage_audit["collisionRecords"] = collision_records
+
+                # 碰撞轮次后重新计算产物与输出统计
+                stage_files_after = list_output_file_names(output_dir)
+                produced_files = sorted(list(stage_files_after - stage_files_before))
+                produced_non_system = [x for x in produced_files if not is_system_generated_output(x)]
+                existing_non_system = [x for x in sorted(stage_files_after) if not is_system_generated_output(x)]
+                stage_audit["producedFiles"] = produced_files
+                stage_audit["producedNonSystemFiles"] = produced_non_system
+                stage_audit["existingNonSystemFiles"] = existing_non_system
+                stage_audit["outputChars"] = len(output)
+
+                with open(stage_file, "w", encoding="utf-8") as f:
+                    f.write(f"# 步骤{execution_no}｜阶段{stage_idx+1}：{stage}\n\n")
+                    f.write(f"角色：{role['name']}（{role['code']}）\n")
+                    f.write(f"返工轮次：{rework_round}\n")
+                    f.write(f"对抗评审轮次：{len(collision_records)}\n\n")
+                    f.write(output + "\n")
+
         # 每个执行角色完成后都做阶段质控（由 reviewer 复核）
         if (not verifier_mode) and (not lead_dispatch_mode) and (not lead_acceptance_mode):
             auto_fail_reason = ""
@@ -1629,9 +1878,11 @@ def run_multi_agent_workflow(task_id: int, task, wf, base_dir: str, input_dir: s
                         f"当前阶段：{stage}，执行角色：{role_code}。\n"
                         f"任务目标：{sections.get('task') or task['description'] or ''}\n"
                         f"期望交付：{sections.get('delivery') or ''}\n"
+                        f"{contract_text}\n"
                         f"本阶段输出：\n{output}\n\n"
                         f"本阶段新增产出（非系统生成）：{produced_non_system}\n"
                         f"当前可验收产物（非系统生成）：{existing_non_system}\n"
+                        "注意：不要把固定文件名当成硬约束，按验收契约判断是否满足任务。"
                         "请返回 JSON："
                         '{"decision":"PASS|FAIL","reason":"...","issues":["..."],"send_back_role":"当前角色code","rework_instructions":"..."}'
                         "。若 FAIL，send_back_role 优先填当前角色。"
